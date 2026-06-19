@@ -1,0 +1,16 @@
+# Python (Entorno virtual y caché)
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Node / Next.js (Dependencias y compilación)
+node_modules/
+.next/
+out/
+build/
+
+# Configuración local e historial del sistema
+.env
+.env.local
+.DS_Store
