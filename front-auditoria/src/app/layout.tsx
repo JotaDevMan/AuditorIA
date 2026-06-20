@@ -32,10 +32,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="min-h-screen flex flex-col bg-zinc-950 text-zinc-100 selection:bg-indigo-500/30">
+      <body className="min-h-screen flex flex-col bg-[#050505] text-zinc-100 selection:bg-indigo-500/30 relative overflow-x-hidden">
         
+        {/* EFECTOS DE FONDO PREMIUM */}
+        <div className="fixed inset-0 z-[-1] pointer-events-none">
+          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-indigo-600/20 blur-[120px] rounded-full mix-blend-screen animate-pulse" style={{ animationDuration: '8s' }} />
+          <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-violet-600/20 blur-[120px] rounded-full mix-blend-screen animate-pulse" style={{ animationDuration: '10s' }} />
+          <div className="absolute top-[30%] left-[50%] w-[40%] h-[40%] bg-emerald-600/10 blur-[120px] rounded-full mix-blend-screen animate-pulse" style={{ animationDuration: '12s' }} />
+        </div>
+
         {/* COMPONENTE: HEADER GLOBAL */}
-        <header className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md">
+        <header className="sticky top-0 z-50 w-full border-b border-white/5 bg-[#050505]/40 backdrop-blur-xl">
           <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
             
             {/* Logo y Nombre del Sistema */}

@@ -15,7 +15,31 @@ interface Message {
   sender: 'user' | 'ai';
   text: string;
   time: string;
+  isNew?: boolean;
 }
+
+const TypewriterText = ({ text, speed = 15, isNew }: { text: string, speed?: number, isNew?: boolean }) => {
+  const [displayedText, setDisplayedText] = useState(isNew ? "" : text);
+
+  React.useEffect(() => {
+    if (!isNew) {
+      setDisplayedText(text);
+      return;
+    }
+    let i = 0;
+    setDisplayedText("");
+    const interval = setInterval(() => {
+      setDisplayedText((prev) => text.substring(0, prev.length + 1));
+      i++;
+      if (i >= text.length) {
+        clearInterval(interval);
+      }
+    }, speed);
+    return () => clearInterval(interval);
+  }, [text, isNew, speed]);
+
+  return <>{displayedText}</>;
+};
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -75,7 +99,8 @@ export default function ChatPage() {
         id: Date.now() + 1,
         sender: 'ai',
         text: data.text || "Hubo un error en la respuesta del bot.",
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isNew: true
       };
       setMessages(prev => [...prev, aiMsg]);
     })
@@ -113,7 +138,8 @@ export default function ChatPage() {
           id: Date.now(),
           sender: 'ai',
           text: `✅ Documento "${file.name}" subido e indexado correctamente en ChromaDB. Ya puedes hacerme preguntas sobre este documento.`,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isNew: true
         }]);
       } else {
         throw new Error("Fallo al subir archivo");
@@ -165,12 +191,18 @@ export default function ChatPage() {
               key={msg.id} 
               className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div className={`max-w-[80%] rounded-2xl p-5 text-[15px] leading-relaxed shadow-xl ${
+              <div className={`max-w-[80%] rounded-2xl p-5 text-[15px] leading-relaxed shadow-xl transition-all duration-300 ${
                 msg.sender === 'user' 
-                  ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-tr-sm border border-white/10' 
-                  : 'bg-zinc-900/80 backdrop-blur-md border border-zinc-700/50 rounded-tl-sm text-zinc-100'
+                  ? 'bg-gradient-to-br from-indigo-600 to-violet-600 text-white rounded-tr-sm border border-indigo-400/20 shadow-indigo-500/10' 
+                  : 'bg-zinc-900/90 backdrop-blur-xl border border-zinc-700/50 rounded-tl-sm text-zinc-100 shadow-black/50'
               }`}>
-                <p className="whitespace-pre-wrap">{msg.text}</p>
+                <p className="whitespace-pre-wrap">
+                  {msg.sender === 'ai' ? (
+                    <TypewriterText text={msg.text} isNew={msg.isNew} speed={15} />
+                  ) : (
+                    msg.text
+                  )}
+                </p>
                 <span className="block text-[10px] text-right mt-3 opacity-50 font-mono tracking-wider">
                   {msg.time}
                 </span>
@@ -226,14 +258,14 @@ export default function ChatPage() {
               onChange={(e) => setInputText(e.target.value)}
               disabled={isUploading || isTyping}
               placeholder={`Solicita una auditoría o pregúntame sobre los documentos...`} 
-              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-5 py-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 text-white placeholder-zinc-500 transition shadow-inner disabled:opacity-50"
+              className="flex-1 bg-zinc-900/50 backdrop-blur-md border border-zinc-800/80 hover:border-zinc-700 rounded-xl px-5 py-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 text-white placeholder-zinc-500 transition-all shadow-inner disabled:opacity-50"
             />
             
             {/* Botón Enviar */}
             <button 
               type="submit" 
               disabled={isUploading || isTyping || !inputText.trim()}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-4 px-8 rounded-xl text-[15px] transition shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:shadow-none"
+              className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold py-4 px-8 rounded-xl text-[15px] transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:shadow-none disabled:transform-none"
             >
               Auditar 🚀
             </button>
