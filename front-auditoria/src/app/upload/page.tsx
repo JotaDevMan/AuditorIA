@@ -15,43 +15,72 @@ interface CustomFile {
 }
 
 export default function UploadPage() {
-  const [files, setFiles] = useState<CustomFile[]>([
-    {
-      id: '1',
-      name: 'Politica-Seguridad-Interna-v2.pdf',
-      size: '2.4 MB',
-      status: 'Indexado',
-      uploadedAt: 'Hace 2 horas'
-    },
-    {
-      id: '2',
-      name: 'Manual-Procesos-Desarrollo-Seguro.pdf',
-      size: '4.1 MB',
-      status: 'Procesando',
-      uploadedAt: 'Hace 5 minutos'
-    }
-  ]);
-
+  const [files, setFiles] = useState<CustomFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Simular la subida de un archivo
-  const handleSimulateUpload = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Cargar lista de archivos subidos al iniciar
+  React.useEffect(() => {
+    const saved = localStorage.getItem('auditoria_files_history');
+    if (saved) {
+      setFiles(JSON.parse(saved));
+    }
+  }, []);
+
+  // Guardar lista de archivos al actualizar
+  React.useEffect(() => {
+    localStorage.setItem('auditoria_files_history', JSON.stringify(files));
+  }, [files]);
+
+  const uploadFile = async (file: File) => {
+    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      alert(`El archivo supera el límite de ${MAX_FILE_SIZE_MB}MB`);
+      return;
+    }
+
     const newFile: CustomFile = {
       id: Date.now().toString(),
-      name: `Documento-Auditoria-Manual-${Math.floor(Math.random() * 100)}.pdf`,
-      size: '1.8 MB',
+      name: file.name,
+      size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
       status: 'Procesando',
       uploadedAt: 'Justo ahora'
     };
     setFiles(prev => [newFile, ...prev]);
 
-    // Simular que el RAG lo indexa después de 4 segundos
-    setTimeout(() => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/documents/upload", {
+        method: "POST",
+        body: formData
+      });
+      if (res.ok) {
+        setFiles(currentFiles => 
+          currentFiles.map(f => f.id === newFile.id ? { ...f, status: 'Indexado' } : f)
+        );
+      } else {
+        throw new Error("Error en el servidor");
+      }
+    } catch (err) {
       setFiles(currentFiles => 
-        currentFiles.map(f => f.id === newFile.id ? { ...f, status: 'Indexado' } : f)
+        currentFiles.map(f => f.id === newFile.id ? { ...f, status: 'Error' } : f)
       );
-    }, 4000);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      uploadFile(e.target.files[0]);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      uploadFile(e.dataTransfer.files[0]);
+    }
   };
 
   return (
@@ -69,10 +98,18 @@ export default function UploadPage() {
         
         {/* ZONA DE ARRASTRE DE ARCHIVOS (DROPZONE) */}
         <div className="lg:col-span-2">
+          <input 
+            type="file" 
+            accept=".pdf"
+            className="hidden" 
+            ref={fileInputRef} 
+            onChange={handleFileSelect} 
+          />
           <div 
-            onClick={handleSimulateUpload}
+            onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
             className={`border-2 border-dashed rounded-2xl p-12 text-center flex flex-col items-center justify-center cursor-pointer transition duration-200 min-h-75 ${
               isDragging 
                 ? 'border-indigo-500 bg-indigo-500/5' 
@@ -88,7 +125,7 @@ export default function UploadPage() {
             </p>
             <div className="mt-6">
               <span className="text-xs font-medium text-indigo-400 bg-indigo-500/10 px-3 py-1.5 rounded-full border border-indigo-500/20">
-                Simular subida rápida
+                Soporte Inteligente Integrado
               </span>
             </div>
           </div>

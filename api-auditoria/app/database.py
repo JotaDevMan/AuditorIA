@@ -12,8 +12,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Esto leerá las variables de tu archivo .env automáticamente
-    OPENAI_API_KEY: str 
-    DATABASE_URL: str 
+    OPENAI_API_KEY: str = ""
+    GEMINI_API_KEY: str = "AQ.Ab8RN6JmPQgcYzjO5L7hkEiCCS8tHcJVY6TB6qHvjAsq8-2lWQ"
+    DATABASE_URL: str = "ck-6sEcFHhCZk4iFdQLmvxpXiU8DgHKc2zZk2G61RuCUBLH"
     VECTOR_DB_PATH: str = "./chroma_db"
 
     class Config:
