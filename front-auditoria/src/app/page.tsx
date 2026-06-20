@@ -1,282 +1,402 @@
 "use client";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 
-import React, { useState, useRef } from 'react';
+// ── CONFIG ──
+const API_BASE   = "http://localhost:8000/api/v1";
+const LOGO_SRC   = "/AuditorIA.jpg";
+const DOCS_KEY   = "auditoria_docs_v1";   // localStorage para documentos subidos (testing)
+const STORE_KEY  = "auditoria_convs_v1";
+const ACTIVE_KEY = "auditoria_active_v1";
 
-// ==========================================
-// VARIABLES DE CONFIGURACIÓN DEL CHAT
-// ==========================================
-const SYSTEM_NAME = "AuditorIA Premium";
-const LLM_MODEL = "GPT-4o (Stable)";   
-const VECTOR_DB = "ChromaDB";          
-const WELCOME_MESSAGE = `¡Hola! Soy tu asistente auditor inteligente. He sido entrenado para evaluar procesos y código mediante las normas indexadas. ¿Qué te gustaría auditar hoy?`;
+const WELCOME_MSG = `¡Hola! Soy **AuditorIA**, tu asistente de auditoría inteligente.
 
-interface Message {
-  id: number;
-  sender: 'user' | 'ai';
-  text: string;
-  time: string;
-  isNew?: boolean;
+Puedo ayudarte a:
+- 📄 **Subir documentos** (PDF/Word) sobre un sistema para auditarlo
+- 🔍 **Responder preguntas** sobre las normas indexadas en ChromaDB
+- 🛡️ **Generar un plan de auditoría** completo basado en tu sistema
+
+¿Qué te gustaría auditar hoy?`;
+
+// ── TYPES ──
+interface Message     { id: number; sender: "user"|"ai"; text: string; time: string; isNew?: boolean; }
+interface Conversation { id: string; title: string; messages: Message[]; createdAt: number; }
+interface DocEntry    { name: string; size: number; uploadedAt: number; convId: string; }
+
+// ── MARKDOWN PARSER ──
+function parseMD(raw: string): string {
+  let h = raw.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  h = h.replace(/```([\s\S]*?)```/g, (_,c) => `<pre><code>${c.trim()}</code></pre>`);
+  h = h.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  h = h.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+  h = h.replace(/\*([^*\n]+?)\*/g,     "<em>$1</em>");
+  h = h.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  h = h.replace(/^## (.+)$/gm,  "<h2>$1</h2>");
+  h = h.replace(/^# (.+)$/gm,   "<h1>$1</h1>");
+  h = h.replace(/^---$/gm,      "<hr/>");
+  h = h.replace(/^[-*] (.+)$/gm,"<li>$1</li>");
+  h = h.replace(/(<li>[\s\S]*?<\/li>)/g, m => `<ul>${m}</ul>`);
+  h = h.replace(/^> (.+)$/gm,   "<blockquote>$1</blockquote>");
+  h = h.replace(/\n{2,}/g,      "</p><p>");
+  h = `<p>${h}</p>`;
+  h = h.replace(/\n/g,           "<br/>");
+  h = h.replace(/<p>\s*<\/p>/g,  "");
+  return h;
 }
 
-const TypewriterText = ({ text, speed = 15, isNew }: { text: string, speed?: number, isNew?: boolean }) => {
-  const [displayedText, setDisplayedText] = useState(isNew ? "" : text);
+// ── TYPEWRITER — texto plano mientras escribe → MD cuando termina ──
+function TypewriterMsg({ text, isNew, speed=10 }: { text:string; isNew?:boolean; speed?:number }) {
+  const [shown, setShown] = useState(isNew ? "" : text);
+  const [done,  setDone]  = useState(!isNew);
 
-  React.useEffect(() => {
-    if (!isNew) {
-      setDisplayedText(text);
-      return;
-    }
-    let i = 0;
-    setDisplayedText("");
-    const interval = setInterval(() => {
-      setDisplayedText((prev) => text.substring(0, prev.length + 1));
-      i++;
-      if (i >= text.length) {
-        clearInterval(interval);
-      }
+  useEffect(() => {
+    if (!isNew) { setShown(text); setDone(true); return; }
+    let i = 0; setShown(""); setDone(false);
+    const iv = setInterval(() => {
+      i++; setShown(text.slice(0, i));
+      if (i >= text.length) { clearInterval(iv); setTimeout(() => setDone(true), 500); }
     }, speed);
-    return () => clearInterval(interval);
+    return () => clearInterval(iv);
   }, [text, isNew, speed]);
 
-  return <>{displayedText}</>;
-};
+  if (done) return <div className="md-body" dangerouslySetInnerHTML={{ __html: parseMD(text) }} />;
+  return (
+    <div className="md-body">
+      <span style={{ whiteSpace: "pre-wrap" }}>{shown}</span>
+      <span className="tcursor">▋</span>
+    </div>
+  );
+}
 
+// ── HELPERS ──
+const ts  = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const uid = () => Math.random().toString(36).slice(2);
+
+function loadConvs(): Conversation[] {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY) || "[]"); } catch { return []; }
+}
+function saveConvs(c: Conversation[]) { localStorage.setItem(STORE_KEY, JSON.stringify(c)); }
+
+function loadDocs(): DocEntry[] {
+  try { return JSON.parse(localStorage.getItem(DOCS_KEY) || "[]"); } catch { return []; }
+}
+function saveDocs(d: DocEntry[]) { localStorage.setItem(DOCS_KEY, JSON.stringify(d)); }
+
+// ════════════════════════════════════════════════════════
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const [convs,       setConvs]       = useState<Conversation[]>([]);
+  const [activeId,    setActiveId]    = useState<string>("");
+  const [inputText,   setInputText]   = useState("");
+  const [isTyping,    setIsTyping]    = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [uploadedDoc, setUploadedDoc] = useState<DocEntry|null>(null);
+  const fileRef   = useRef<HTMLInputElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const taRef     = useRef<HTMLTextAreaElement>(null);
 
-  // Cargar historial al iniciar
-  React.useEffect(() => {
-    const saved = localStorage.getItem('auditoria_chat_history_v2');
-    if (saved) {
-      setMessages(JSON.parse(saved));
-    } else {
-      setMessages([{
-        id: 1,
-        sender: 'ai',
-        text: WELCOME_MESSAGE,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
+  // ── Init ──
+  useEffect(() => {
+    let stored = loadConvs();
+    let aid    = localStorage.getItem(ACTIVE_KEY) || "";
+    if (!stored.length || !stored.find(c => c.id === aid)) {
+      const first = makeNewConv();
+      stored = [first]; aid = first.id;
+      saveConvs(stored);
     }
+    setConvs(stored.map(c => ({ ...c, messages: c.messages.map(m => ({ ...m, isNew: false })) })));
+    setActiveId(aid);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Guardar historial al actualizar
-  React.useEffect(() => {
-    if (messages.length > 0) {
-      localStorage.setItem('auditoria_chat_history_v2', JSON.stringify(messages));
-    }
-  }, [messages]);
+  useEffect(() => { if (convs.length) saveConvs(convs); }, [convs]);
+  useEffect(() => { if (activeId) localStorage.setItem(ACTIVE_KEY, activeId); }, [activeId]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [convs, isTyping, activeId]);
+  useEffect(() => {
+    const ta = taRef.current; if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+  }, [inputText]);
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputText.trim()) return;
+  // Cargar doc activo del conv activo
+  useEffect(() => {
+    if (!activeId) return;
+    const docs = loadDocs();
+    const doc  = docs.filter(d => d.convId === activeId).slice(-1)[0] ?? null;
+    setUploadedDoc(doc);
+  }, [activeId]);
 
-    const userMsg: Message = {
-      id: Date.now(),
-      sender: 'user',
-      text: inputText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
+  function makeNewConv(): Conversation {
+    return { id: uid(), title: "Nueva conversación", createdAt: Date.now(), messages: [{ id: 1, sender: "ai", text: WELCOME_MSG, time: ts() }] };
+  }
 
-    setMessages(prev => [...prev, userMsg]);
-    setInputText('');
-    setIsTyping(true);
+  const activeConv = convs.find(c => c.id === activeId);
+  const messages   = activeConv?.messages ?? [];
 
-    // Llamada a la API real de FastAPI
-    fetch("http://localhost:8000/api/v1/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ message: inputText })
-    })
-    .then(res => res.json())
-    .then(data => {
-      const aiMsg: Message = {
-        id: Date.now() + 1,
-        sender: 'ai',
-        text: data.text || "Hubo un error en la respuesta del bot.",
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        isNew: true
-      };
-      setMessages(prev => [...prev, aiMsg]);
-    })
-    .catch(err => {
-      console.error(err);
-      const errMsg: Message = {
-        id: Date.now() + 1,
-        sender: 'ai',
-        text: "❌ Error de conexión: Asegúrate de que el backend FastAPI esté encendido en el puerto 8000.",
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-      setMessages(prev => [...prev, errMsg]);
-    })
-    .finally(() => {
-      setIsTyping(false);
-    });
-  };
+  function addNewChat() {
+    const c = makeNewConv();
+    setConvs(prev => [c, ...prev]);
+    setActiveId(c.id);
+    setInputText("");
+    setUploadedDoc(null);
+  }
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    const file = e.target.files[0];
-    
-    setIsUploading(true);
-    
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      const res = await fetch("http://localhost:8000/api/v1/documents/upload", {
-        method: "POST",
-        body: formData
-      });
-      if (res.ok) {
-        setMessages(prev => [...prev, {
-          id: Date.now(),
-          sender: 'ai',
-          text: `✅ Documento "${file.name}" subido e indexado correctamente en ChromaDB. Ya puedes hacerme preguntas sobre este documento.`,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isNew: true
-        }]);
-      } else {
-        throw new Error("Fallo al subir archivo");
+  function deleteConv(id: string) {
+    setConvs(prev => {
+      const next = prev.filter(c => c.id !== id);
+      if (id === activeId) {
+        if (next.length) setActiveId(next[0].id);
+        else { const fresh = makeNewConv(); return [fresh]; }
       }
-    } catch (err) {
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        sender: 'ai',
-        text: `❌ Hubo un error procesando el archivo "${file.name}". Verifica la conexión.`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
+      return next;
+    });
+    // Limpiar docs de esa conversación
+    saveDocs(loadDocs().filter(d => d.convId !== id));
+  }
+
+  function updateConv(id: string, msgs: Message[]) {
+    setConvs(prev => prev.map(c => {
+      if (c.id !== id) return c;
+      const title = msgs.find(m => m.sender === "user")?.text.slice(0, 40) ?? c.title;
+      return { ...c, messages: msgs, title };
+    }));
+  }
+
+  // ── Send mensaje al backend ──
+  const sendToAPI = useCallback(async (prompt: string, currentMsgs: Message[]) => {
+    setIsTyping(true);
+    try {
+      const res  = await fetch(`${API_BASE}/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: prompt }) });
+      const data = await res.json();
+      const aiMsg: Message = { id: Date.now() + 1, sender: "ai", text: data.text || "Sin respuesta del servidor.", time: ts(), isNew: true };
+      updateConv(activeId, [...currentMsgs, aiMsg]);
+    } catch {
+      updateConv(activeId, [...currentMsgs, { id: Date.now() + 1, sender: "ai", text: "❌ **Error de conexión** con el backend. Asegúrate de que FastAPI esté corriendo en el puerto 8000.", time: ts(), isNew: true }]);
     } finally {
-      setIsUploading(false);
+      setIsTyping(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+
+  // ── Enviar mensaje de texto ──
+  const handleSend = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputText.trim() || isTyping || isUploading || !activeId) return;
+    const userMsg: Message = { id: Date.now(), sender: "user", text: inputText, time: ts() };
+    const next = [...messages, userMsg];
+    updateConv(activeId, next);
+    setInputText("");
+    // Si hay doc subido, lo menciona en el contexto
+    const docContext = uploadedDoc ? `\n\n[Contexto: El usuario ha subido el documento "${uploadedDoc.name}" para auditar.]` : "";
+    await sendToAPI(inputText + docContext, next);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputText, isTyping, isUploading, activeId, messages, uploadedDoc, sendToAPI]);
+
+  const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e as unknown as React.FormEvent); }
   };
 
+  // ── Subir archivo — SOLO localStorage, sin indexar en ChromaDB ──
+  const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.length || !activeId) return;
+    const file = e.target.files[0];
+
+    // Validar tipo
+    if (!file.name.match(/\.(pdf|docx|doc)$/i)) {
+      alert("Solo se permiten archivos PDF o Word (.pdf, .doc, .docx)");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+
+    setIsUploading(true);
+
+    // 1️⃣ Guardar SOLO metadata en localStorage (sin subir al backend)
+    const entry: DocEntry = { name: file.name, size: file.size, uploadedAt: Date.now(), convId: activeId };
+    const docs = loadDocs().filter(d => d.convId !== activeId); // 1 doc por conv
+    saveDocs([...docs, entry]);
+    setUploadedDoc(entry);
+    if (fileRef.current) fileRef.current.value = "";
+
+    // 2️⃣ Mostrar mensaje del usuario con el nombre del archivo
+    const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+    const userText = `📎 Adjunté el documento **${file.name}** (${sizeMB} MB). Ayúdame a planificar la auditoría de este sistema.`;
+    const userMsg: Message = { id: Date.now(), sender: "user", text: userText, time: ts() };
+    const next = [...messages, userMsg];
+    updateConv(activeId, next);
+
+    // 3️⃣ Enviar prompt al chat API (usa conocimiento de ChromaDB que ya tiene indexado)
+    //    El archivo NO se sube — la IA responde con su base de normas ya indexadas
+    const auditPrompt = `El usuario adjuntó un documento llamado "${file.name}" que describe un sistema que desea auditar. Usando tu conocimiento de normas de auditoría ya disponibles (ISO 27001, COBIT 5, ITIL, etc.), genera una **Planificación de Auditoría de Sistema** estructurada que incluya:
+
+1. **Objetivos de la auditoría**
+2. **Alcance propuesto** (áreas y procesos a cubrir)
+3. **Normas y estándares aplicables** (ISO 27001, COBIT, etc.)
+4. **Controles clave a verificar**
+5. **Riesgos identificados comúnmente en este tipo de sistemas**
+6. **Cronograma de actividades sugerido**
+7. **Recomendaciones preliminares**
+
+Responde de forma profesional, clara y estructurada.`;
+
+    await sendToAPI(auditPrompt, next);
+    setIsUploading(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, messages, sendToAPI]);
+
+  // ════════════════ RENDER ════════════════
   return (
-    <div className="flex-1 max-w-5xl mx-auto w-full flex flex-col space-y-4 min-h-[600px]">
-      
-      {/* PANEL PRINCIPAL DE INTERACCIÓN */}
-      <section className="flex-1 bg-[#0f0f13] border border-white/10 rounded-3xl flex flex-col overflow-hidden shadow-2xl backdrop-blur-xl relative">
-        
-        {/* Cabecera del Chat Premium */}
-        <div className="bg-white/[0.02] border-b border-white/10 px-8 py-5 flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-            </div>
-            <div>
-              <h3 className="font-bold text-[15px] text-white tracking-wide">{SYSTEM_NAME}</h3>
-              <p className="text-[11px] text-zinc-400 font-medium tracking-wider uppercase">Motor RAG Activo</p>
+    <div className="chatgpt-root">
+
+      {/* ══════════════ SIDEBAR ══════════════ */}
+      <aside className={`sidebar ${sidebarOpen ? "sidebar--open" : "sidebar--closed"}`}>
+
+        {/* Header */}
+        <div className="sidebar-header">
+          <div className="sidebar-logo">
+            <img src={LOGO_SRC} alt="AuditorIA" className="sidebar-logo-img" />
+            {sidebarOpen && (
+              <span className="sidebar-logo-text">
+                <span className="grad-text">Auditor</span><span className="grad-ia">IA</span>
+              </span>
+            )}
+          </div>
+          <button className="sidebar-toggle" onClick={() => setSidebarOpen(p => !p)} title="Colapsar sidebar">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              {sidebarOpen
+                ? <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7M18 19l-7-7 7-7"/>
+                : <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M6 5l7 7-7 7"/>}
+            </svg>
+          </button>
+        </div>
+
+        {/* Nuevo Chat */}
+        <button className="new-chat-btn" onClick={addNewChat}>
+          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/>
+          </svg>
+          {sidebarOpen && <span>Nuevo Chat</span>}
+        </button>
+
+        {/* Historial */}
+        {sidebarOpen && (
+          <div className="sidebar-history">
+            <p className="history-label">Conversaciones</p>
+            <div className="history-list">
+              {convs.map(conv => (
+                <div
+                  key={conv.id}
+                  className={`history-item ${conv.id === activeId ? "history-item--active" : ""}`}
+                  onClick={() => setActiveId(conv.id)}
+                >
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                  </svg>
+                  <span className="history-title">{conv.title}</span>
+                  <button className="history-del" onClick={ev => { ev.stopPropagation(); deleteConv(conv.id); }} title="Eliminar">
+                    <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
-          <div className="flex items-center space-x-3">
-            <span className="text-xs bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-3 py-1.5 rounded-full font-mono shadow-inner">
-              🤖 {LLM_MODEL}
-            </span>
-            <span className="text-xs bg-rose-500/10 text-rose-300 border border-rose-500/20 px-3 py-1.5 rounded-full font-mono hidden sm:inline shadow-inner">
-              🗄️ {VECTOR_DB}
-            </span>
+        )}
+
+        {/* Footer — solo cuando está abierto */}
+        {sidebarOpen && (
+          <div className="sidebar-footer">
+            <span className="sidebar-badge">🤖 GPT-4o</span>
+            <span className="sidebar-badge sidebar-badge--db">🗄️ ChromaDB</span>
+          </div>
+        )}
+      </aside>
+
+      {/* ══════════════ MAIN CHAT ══════════════ */}
+      <main className="chat-main">
+
+        {/* Header */}
+        <div className="chat-header">
+          <div className="chat-header-left">
+            <span className="online-dot"/>
+            <span className="chat-header-title">{activeConv?.title ?? "AuditorIA"}</span>
+          </div>
+          <div className="chat-header-right">
+            {uploadedDoc && (
+              <span className="doc-pill" title={uploadedDoc.name}>
+                📎 {uploadedDoc.name.length > 22 ? uploadedDoc.name.slice(0,22)+"…" : uploadedDoc.name}
+              </span>
+            )}
+            <span className="header-version">v1.0 Beta</span>
+            <span className="online-badge">● Online</span>
           </div>
         </div>
 
-        {/* Caja de Mensajes */}
-        <div className="flex-1 p-8 space-y-6 overflow-y-auto max-h-[500px] min-h-[400px] scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-          {messages.map((msg) => (
-            <div 
-              key={msg.id} 
-              className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div className={`max-w-[80%] rounded-2xl p-5 text-[15px] leading-relaxed shadow-xl transition-all duration-300 ${
-                msg.sender === 'user' 
-                  ? 'bg-gradient-to-br from-indigo-600 to-violet-600 text-white rounded-tr-sm border border-indigo-400/20 shadow-indigo-500/10' 
-                  : 'bg-zinc-900/90 backdrop-blur-xl border border-zinc-700/50 rounded-tl-sm text-zinc-100 shadow-black/50'
-              }`}>
-                <p className="whitespace-pre-wrap">
-                  {msg.sender === 'ai' ? (
-                    <TypewriterText text={msg.text} isNew={msg.isNew} speed={15} />
-                  ) : (
-                    msg.text
-                  )}
-                </p>
-                <span className="block text-[10px] text-right mt-3 opacity-50 font-mono tracking-wider">
-                  {msg.time}
-                </span>
+        {/* Messages */}
+        <div className="messages-area">
+          {messages.map(msg => (
+            <div key={msg.id} className={`msg-row ${msg.sender === "user" ? "msg-row--user" : "msg-row--ai"}`}>
+              {msg.sender === "ai" && (
+                <div className="ai-avatar">
+                  <img src={LOGO_SRC} alt="AI" />
+                </div>
+              )}
+              <div className={`bubble ${msg.sender === "user" ? "bubble--user" : "bubble--ai"}`}>
+                {msg.sender === "ai"
+                  ? <TypewriterMsg text={msg.text} isNew={msg.isNew} speed={10}/>
+                  : <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{msg.text}</p>}
+                <span className="msg-time">{msg.time}</span>
               </div>
             </div>
           ))}
+
           {isTyping && (
-            <div className="flex justify-start">
-              <div className="bg-zinc-900/80 border border-zinc-700/50 rounded-2xl rounded-tl-sm p-5 text-sm text-zinc-400 flex items-center space-x-3">
-                <div className="flex space-x-1">
-                  <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce"></div>
-                  <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                  <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                </div>
-                <span>Analizando contexto de auditoría...</span>
+            <div className="msg-row msg-row--ai">
+              <div className="ai-avatar">
+                <img src={LOGO_SRC} alt="AI"/>
+              </div>
+              <div className="bubble bubble--ai bubble--typing">
+                <span className="typing-text">Analizando</span>
+                <span className="dot dot1"/><span className="dot dot2"/><span className="dot dot3"/>
               </div>
             </div>
           )}
+          <div ref={bottomRef}/>
         </div>
 
-        {/* Input de Entrada de Texto + Adjuntar */}
-        <div className="p-4 bg-zinc-950/80 border-t border-white/10">
-          <form onSubmit={handleSendMessage} className="flex items-center space-x-3 max-w-4xl mx-auto w-full">
-            
-            {/* Input File Oculto */}
-            <input 
-              type="file" 
-              accept=".pdf"
-              className="hidden" 
-              ref={fileInputRef} 
-              onChange={handleFileUpload} 
-            />
-
-            {/* Botón de Adjuntar PDF (NUEVO) */}
-            <button 
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading || isTyping}
-              className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white transition duration-200 flex-shrink-0 disabled:opacity-50"
-              title="Adjuntar norma ISO o documento PDF"
-            >
-              {isUploading ? (
-                <span className="animate-spin text-xl">⏳</span>
-              ) : (
-                <span className="text-xl">📎</span>
-              )}
+        {/* Input */}
+        <div className="input-area">
+          <input type="file" accept=".pdf,.doc,.docx" className="sr-only" ref={fileRef} onChange={handleUpload}/>
+          <div className="input-box">
+            <button type="button" className="attach-btn" onClick={() => fileRef.current?.click()} disabled={isUploading || isTyping} title="Adjuntar PDF o Word para auditar">
+              {isUploading
+                ? <svg className="spin" width="16" height="16" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity=".25"/><path fill="currentColor" d="M4 12a8 8 0 018-8v8z" opacity=".75"/></svg>
+                : <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>}
             </button>
-
-            {/* Barra de Texto */}
-            <input 
-              type="text" 
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              disabled={isUploading || isTyping}
-              placeholder={`Solicita una auditoría o pregúntame sobre los documentos...`} 
-              className="flex-1 bg-zinc-900/50 backdrop-blur-md border border-zinc-800/80 hover:border-zinc-700 rounded-xl px-5 py-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 text-white placeholder-zinc-500 transition-all shadow-inner disabled:opacity-50"
-            />
-            
-            {/* Botón Enviar */}
-            <button 
-              type="submit" 
-              disabled={isUploading || isTyping || !inputText.trim()}
-              className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold py-4 px-8 rounded-xl text-[15px] transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:shadow-none disabled:transform-none"
-            >
-              Auditar 🚀
-            </button>
-          </form>
-          <div className="text-center mt-3">
-             <span className="text-[10px] text-zinc-500 font-medium tracking-wide uppercase">Solo los documentos indexados forman el conocimiento del sistema</span>
+            <form onSubmit={handleSend} style={{ flex: 1, display: "flex", gap: "8px", alignItems: "flex-end" }}>
+              <textarea
+                ref={taRef} rows={1}
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                onKeyDown={handleKey}
+                disabled={isUploading || isTyping}
+                placeholder={uploadedDoc ? `Pregunta sobre "${uploadedDoc.name}"…` : "Envía un mensaje o adjunta un documento para auditar…"}
+                className="chat-input"
+              />
+              <button type="submit" disabled={!inputText.trim() || isTyping || isUploading} className="send-btn">
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24" style={{ transform: "rotate(45deg)" }}>
+                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                </svg>
+              </button>
+            </form>
           </div>
+          <p className="input-hint">
+            {uploadedDoc
+              ? `📎 Documento activo: ${uploadedDoc.name} · Puedes hacer preguntas sobre él`
+              : "Adjunta un PDF/Word para iniciar una auditoría · Shift+Enter para nueva línea"}
+          </p>
         </div>
 
-      </section>
-
+      </main>
     </div>
   );
 }
