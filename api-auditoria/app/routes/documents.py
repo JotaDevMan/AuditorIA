@@ -3,17 +3,21 @@ MÓDULO: RUTAS API - CARGA DE DOCUMENTOS
 RESPONSABLE: Desarrollador Backend / Pipeline RAG.
 """
 
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, Depends
 import shutil
 import os
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.rag.vector_store import add_documents_to_chroma, get_vector_store
+from app.services.security import require_admin
 
 router = APIRouter(prefix="/api/v1/documents", tags=["Documentos"])
 
 @router.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
+    file: UploadFile = File(...),
+    current_user = Depends(require_admin)
+):
     print(f"📥 Recibiendo archivo: {file.filename}...")
     temp_file_path = f"temp_{file.filename}"
     with open(temp_file_path, "wb") as buffer:

@@ -3,11 +3,12 @@ MÓDULO: RUTAS API - ENDPOINTS DEL CHAT
 RESPONSABLE: Desarrollador Backend / Integración.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from app.rag.vector_store import query_documents
 from langchain_google_genai import ChatGoogleGenerativeAI
 from app.database import settings
+from app.services.security import get_current_user
 import os
 
 router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
@@ -16,7 +17,10 @@ class ChatMessage(BaseModel):
     message: str
 
 @router.post("")
-def handle_chat_message(chat_msg: ChatMessage):
+def handle_chat_message(
+    chat_msg: ChatMessage,
+    current_user = Depends(get_current_user)
+):
     if settings.GEMINI_API_KEY:
         os.environ["GOOGLE_API_KEY"] = settings.GEMINI_API_KEY
     

@@ -14,7 +14,16 @@ Cada cosa tiene su carpeta correspondiente dentro de 'api-auditoria/app/...'
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import chat, documents  # Al crear más rutas, se importan aquí
+from app.routes import chat, documents, auth  # Al crear más rutas, se importan aquí
+
+from app.database import Base, engine
+
+from app.models.user import User
+
+# Crear las tablas en la base de datos
+Base.metadata.create_all(bind=engine)
+
+
 
 app = FastAPI(
     title="AuditorIA API",
@@ -34,6 +43,7 @@ app.add_middleware(
 # Inclusión de módulos de rutas independientes
 app.include_router(chat.router)
 app.include_router(documents.router)
+app.include_router(auth.router)
 
 @app.get("/")
 def read_root():

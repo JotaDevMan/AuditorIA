@@ -47,6 +47,23 @@ export default function ChatPage() {
   const [isTyping, setIsTyping] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [role, setRole] = useState(null);
+
+
+  React.useEffect(() => {
+
+  const token = localStorage.getItem("token");
+
+  if (!token) {
+
+    window.location.href = "/login";
+  }
+
+  const savedRole = localStorage.getItem("role");
+
+  setRole(savedRole);
+
+  }, []);
 
   // Cargar historial al iniciar
   React.useEffect(() => {
@@ -86,10 +103,12 @@ export default function ChatPage() {
     setIsTyping(true);
 
     // Llamada a la API real de FastAPI
+    const token = localStorage.getItem("token");
     fetch("http://localhost:8000/api/v1/chat", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
       },
       body: JSON.stringify({ message: inputText })
     })
@@ -129,8 +148,12 @@ export default function ChatPage() {
     formData.append("file", file);
 
     try {
+      const token = localStorage.getItem("token");
       const res = await fetch("http://localhost:8000/api/v1/documents/upload", {
         method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        },
         body: formData
       });
       if (res.ok) {
@@ -237,6 +260,7 @@ export default function ChatPage() {
             />
 
             {/* Botón de Adjuntar PDF (NUEVO) */}
+            {role === "admin" && (
             <button 
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -250,6 +274,7 @@ export default function ChatPage() {
                 <span className="text-xl">📎</span>
               )}
             </button>
+            )}
 
             {/* Barra de Texto */}
             <input 
