@@ -14,16 +14,33 @@ Cada cosa tiene su carpeta correspondiente dentro de 'api-auditoria/app/...'
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import chat, documents, auth  # Al crear más rutas, se importan aquí
+from app.routes import chat, documents, auth
+from app.database import engine, Base, SessionLocal
+from app.models import User
 
-from app.database import Base, engine
-
-from app.models.user import User
-
-# Crear las tablas en la base de datos
+# Crear las tablas en la base de datos PostgreSQL
 Base.metadata.create_all(bind=engine)
 
+def seed_users():
+    """Crea los usuarios por defecto si no existen."""
+    db = SessionLocal()
+    try:
+        default_users = [
+            {"username": "usuario1", "password": "usuario1", "role": "usuario"},
+            {"username": "admin123", "password": "admin123", "role": "administrador"},
+        ]
+        for u in default_users:
+            exists = db.query(User).filter(User.username == u["username"]).first()
+            if not exists:
+                db.add(User(**u))
+        db.commit()
+        print("Usuarios por defecto verificados en PostgreSQL.")
+    except Exception as e:
+        print(f"Error en seed de usuarios: {e}")
+    finally:
+        db.close()
 
+seed_users()
 
 app = FastAPI(
     title="AuditorIA API",
