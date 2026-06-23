@@ -38,7 +38,7 @@
 }
 
 body {
-  background: var(--bg-main);
+  background: radial-gradient(circle at top, #13111C, #0a0a0f);
   color: var(--text);
   font-family: var(--font-geist-sans), 'Inter', system-ui, sans-serif;
   height: 100vh;
@@ -57,6 +57,19 @@ body {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
+  position: relative;
+}
+
+.chatgpt-root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(99, 102, 241, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99, 102, 241, 0.04) 1px, transparent 1px);
+  background-size: 30px 30px;
+  pointer-events: none;
+  z-index: 0;
 }
 
 /* ─────────────────────────────────────────────────
@@ -305,6 +318,54 @@ body {
   color: #fca5a5;
 }
 
+/* Logout Button */
+.logout-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  padding: 0.7rem 0.8rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13.5px;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.logout-btn::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.2), transparent);
+  transition: all 0.5s ease;
+}
+
+.logout-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.3);
+  transform: translateY(-1px);
+}
+
+.logout-btn:hover::before {
+  left: 100%;
+}
+
+.logout-btn svg {
+  transition: transform 0.3s ease;
+}
+
+.logout-btn:hover svg {
+  transform: translateX(-3px);
+}
+
 /* ─────────────────────────────────────────────────
    MAIN CHAT AREA
 ───────────────────────────────────────────────── */
@@ -445,7 +506,7 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  max-width: 760px;
+  max-width: 900px;
   width: 100%;
 }
 
@@ -497,6 +558,13 @@ body {
   align-items: center;
   justify-content: center;
   margin-top: 2px;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
+  animation: pulse-avatar 3s infinite alternate;
+}
+
+@keyframes pulse-avatar {
+  from { box-shadow: 0 0 10px rgba(99, 102, 241, 0.1); }
+  to { box-shadow: 0 0 20px rgba(99, 102, 241, 0.4); }
 }
 
 .ai-avatar img {
@@ -511,16 +579,17 @@ body {
   border-radius: 16px;
   font-size: 14.5px;
   line-height: 1.7;
-  max-width: 80%;
+  max-width: 100%;
   position: relative;
 }
 
 .bubble--ai {
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(99, 102, 241, 0.2);
   border-radius: 4px 16px 16px 16px;
   color: #e2e2ee;
   backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 20px rgba(99, 102, 241, 0.05);
 }
 
 .bubble--user {
@@ -870,7 +939,7 @@ body {
   flex-shrink: 0;
   width: 34px;
   height: 34px;
-  background: linear-gradient(135deg, #4338ca, #6d28d9);
+  background: linear-gradient(135deg, #06b6d4, #3b82f6);
   border: none;
   border-radius: 9px;
   color: white;
@@ -879,16 +948,62 @@ body {
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
-  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.35);
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
 }
 
 .send-btn:hover:not(:disabled) {
-  transform: scale(1.07);
-  box-shadow: 0 4px 18px rgba(99, 102, 241, 0.5);
+  transform: scale(1.05) translateY(-2px);
+  box-shadow: 0 0 25px rgba(6, 182, 212, 0.6);
+  background: linear-gradient(135deg, #22d3ee, #60a5fa);
 }
 
 .send-btn:active:not(:disabled) {
   transform: scale(0.95);
+}
+
+.send-icon {
+  transform: rotate(45deg);
+  transition: transform 0.3s ease;
+}
+
+.send-btn:hover:not(:disabled) .send-icon {
+  transform: rotate(45deg) translate(2px, -2px) scale(1.1);
+  animation: send-fly 1s infinite alternate;
+}
+
+@keyframes send-fly {
+  0% { transform: rotate(45deg) translate(0px, 0px); }
+  100% { transform: rotate(45deg) translate(3px, -3px); }
+}
+
+.cancel-btn {
+  flex-shrink: 0;
+  height: 34px;
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+  border: none;
+  border-radius: 9px;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  transition: all 0.2s;
+  box-shadow: 0 2px 12px rgba(239, 68, 68, 0.35);
+  font-family: var(--font-geist-sans), sans-serif;
+}
+
+.cancel-btn:hover {
+  transform: scale(1.03);
+  box-shadow: 0 4px 18px rgba(239, 68, 68, 0.6);
+  background: linear-gradient(135deg, #f87171, #dc2626);
+}
+
+.cancel-text {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .send-btn:disabled {
@@ -987,4 +1102,190 @@ body {
   font-weight: 600;
   color: #f1f5f9;
   letter-spacing: 0.01em;
+}
+
+/* ─────────────────────────────────────────────────
+   MOBILE RESPONSIVENESS
+───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .chatgpt-root {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100% !important;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .sidebar--closed {
+    height: 56px;
+    overflow: hidden;
+  }
+
+  .sidebar-history {
+    max-height: 200px;
+  }
+
+  .chat-header {
+    padding: 0 16px;
+  }
+
+  .messages-area {
+    padding: 16px 12px;
+  }
+
+  .msg-row {
+    max-width: 100%;
+  }
+
+  .bubble {
+    max-width: 90%;
+  }
+
+  .input-area {
+    padding: 10px 12px 12px;
+  }
+}
+
+/* ── Markdown Tables ── */
+.table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  margin: 1.5rem 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.md-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.9rem;
+  table-layout: auto;
+}
+
+.md-table th {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 12px 16px;
+  font-weight: 600;
+  color: #f8fafc;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  text-align: left;
+  min-width: 140px;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+}
+
+.md-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  color: #e2e8f0;
+  vertical-align: top;
+  text-align: left;
+  line-height: 1.5;
+  min-width: 140px;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+}
+
+.md-table th:last-child,
+.md-table td:last-child {
+  border-right: none;
+}
+
+.md-table tr:last-child td {
+  border-bottom: none;
+}
+
+.md-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ─────────────────────────────────────────────────
+   MODAL DE CONFIRMACIÓN
+───────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.modal-content {
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 16px;
+  padding: 24px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  animation: slideUpFade 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  text-align: center;
+}
+
+.modal-content h3 {
+  color: #f8fafc;
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 1.25rem;
+}
+
+.modal-content p {
+  color: #94a3b8;
+  font-size: 0.95rem;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.modal-actions button {
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-cancel {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+}
+
+.btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.btn-confirm {
+  background: linear-gradient(135deg, #38bdf8 0%, #6366f1 100%);
+  border: none;
+  color: white;
+  box-shadow: 0 4px 15px rgba(56, 189, 248, 0.3);
+}
+
+.btn-confirm:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(56, 189, 248, 0.4);
+}
+
+@keyframes slideUpFade {
+  from { opacity: 0; transform: translateY(20px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }

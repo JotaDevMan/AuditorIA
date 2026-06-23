@@ -26,8 +26,8 @@ def seed_users():
     db = SessionLocal()
     try:
         default_users = [
-            {"username": "usuario1", "password": "usuario1", "role": "usuario"},
-            {"username": "admin123", "password": "admin123", "role": "administrador"},
+            {"username": "usuario1", "password": "usuario1", "role": "usuario", "email": "usuario1@auditoria.local"},
+            {"username": "admin123", "password": "admin123", "role": "administrador", "email": "admin@auditoria.local"},
         ]
         for u in default_users:
             exists = db.query(User).filter(User.username == u["username"]).first()

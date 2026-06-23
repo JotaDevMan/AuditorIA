@@ -22,3 +22,6 @@ nest_asyncio
 python-docx
 docx2txt
 requests
+langchain-cohere
+cohere
+pywin32

@@ -2,30 +2,42 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 
 // ── CONFIG ──
-const API_BASE = "http://localhost:8000/api/v1";
+const API_BASE = "http://127.0.0.1:8000/api/v1";
 const LOGO_SRC = "/AuditorIA.jpg";
 const DOCS_KEY = "auditoria_docs_v1";   // localStorage para documentos subidos (testing)
 const STORE_KEY = "auditoria_convs_v1";
 const ACTIVE_KEY = "auditoria_active_v1";
 
-const WELCOME_MSG = `¡Hola! Soy **AuditorIA**, tu asistente de auditoría inteligente.
+const getWelcomeMsg = (userName: string = "") => {
+  const nameDisplay = userName ? ` **${userName.split(' ')[0]}**` : "";
+  return `¡Hola${nameDisplay}! Encantado de saludarte. Dime, ¿qué necesitas?
 
 Puedo ayudarte a:
-- 📄 **Subir documentos** (PDF/Word) sobre un sistema para auditarlo
-- 🔍 **Responder preguntas** sobre las normas indexadas
-- 🛡️ **Generar un plan de auditoría** completo basado en tu sistema
+- 🛡️ **Auditar sistemas** analizando tus documentos PDF/Word
+- 🔍 **Responder preguntas** sobre normas ISO y frameworks (basado en mi conocimiento)
+- 📋 **Generar planes de auditoría** completos con fases, evidencias y responsables
 
-¿Qué te gustaría auditar hoy?`;
+Hasta donde esté mi capacidad de conocimiento, haré todo lo posible para asistirte. ¿Por dónde empezamos?`;
+};
 
 // ── TYPES ──
 interface Message { id: number; sender: "user" | "ai"; text: string; time: string; isNew?: boolean; file?: { name: string; size: number }; }
 interface Conversation { id: string; title: string; messages: Message[]; createdAt: number; }
 interface DocEntry { name: string; size: number; uploadedAt: number; convId: string; content?: string; }
 
-// ── MARKDOWN PARSER ──
+// ── MARKDOWN PARSER (XSS SECURE) ──
 function parseMD(raw: string, typing: boolean = false): string {
+  // 1. Escapar HTML base para neutralizar <script> e inyecciones directas
   let h = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+  // 2. Bloquear links o imágenes con payload javascript: o eventos on*
+  h = h.replace(/javascript:/gi, "blocked:");
+  h = h.replace(/on\w+=/gi, "blocked-event=");
+
+  // 2.5 Permitir explícitamente etiquetas <br> seguras (útil para saltos de línea dentro de tablas Markdown)
+  h = h.replace(/&lt;br\s*\/?&gt;/gi, "<br/>");
+
+  // 3. Procesar Markdown a HTML
   h = h.replace(/```([\s\S]*?)(?:```|$)/g, (_, c) => `<pre><code>${c.trim()}</code></pre>`);
   h = h.replace(/`([^`\n]+)(?:`|$)/g, "<code>$1</code>");
   h = h.replace(/\*\*([^*\n]+?)(?:\*\*|$)/g, "<strong>$1</strong>");
@@ -39,6 +51,30 @@ function parseMD(raw: string, typing: boolean = false): string {
   h = h.replace(/(<li>[\s\S]*?<\/li>)/g, m => `<ul>${m}</ul>`);
   h = h.replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>");
 
+  // 4. TABLAS MARKDOWN
+  // Buscar filas que empiecen y terminen con '|'
+  let inTable = false;
+  let tableRows: string[] = [];
+  
+  h = h.replace(/^\|(.+)\|[ \t]*$/gm, (match, inner) => {
+    if (/^[\-\s:|]+$/.test(inner)) return ''; // Ignorar fila separadora
+    const cells = inner.split('|').map(c => c.trim());
+    return `<tr>${cells.map(c => `<td>${c}</td>`).join('')}</tr>`;
+  });
+
+  // Agrupar filas tr consecutivas (ignorando saltos de línea vacíos entre ellas)
+  h = h.replace(/(?:<tr>[\s\S]*?<\/tr>\s*)+/g, match => {
+    // split by </tr> and clean up
+    let rows = match.split('</tr>').map(r => r.trim()).filter(r => r.startsWith('<tr>')).map(r => r + '</tr>');
+    if (rows.length === 0) return match;
+    
+    let thead = rows.shift() || "";
+    thead = thead.replace(/<td>/g, '<th>').replace(/<\/td>/g, '</th>');
+    let tbody = rows.join('');
+    
+    return `<div class="table-wrapper"><table class="md-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>\n`;
+  });
+
   if (typing) h += '<span class="tcursor"></span>';
 
   h = h.replace(/\n{2,}/g, "</p><p>");
@@ -51,7 +87,7 @@ function parseMD(raw: string, typing: boolean = false): string {
 const animationProgress = new Map<number, number>();
 
 // ── TYPEWRITER — renderiza Markdown progresivamente ──
-function TypewriterMsg({ id, text, isNew, speed = 10 }: { id: number; text: string; isNew?: boolean; speed?: number }) {
+function TypewriterMsg({ id, text, isNew, speed = 10, isCancelled, onStart, onEnd, onSavePartial }: { id: number; text: string; isNew?: boolean; speed?: number; isCancelled?: boolean; onStart?: (id: number) => void; onEnd?: (id: number) => void; onSavePartial?: (id: number, partialText: string) => void; }) {
   const startIdx = isNew ? (animationProgress.get(id) || 0) : text.length;
   const [shown, setShown] = useState(text.slice(0, startIdx));
   const [done, setDone] = useState(!isNew || startIdx >= text.length);
@@ -64,9 +100,16 @@ function TypewriterMsg({ id, text, isNew, speed = 10 }: { id: number; text: stri
       return;
     }
 
+    if (isCancelled) {
+      setDone(true);
+      if (onSavePartial) onSavePartial(id, shown);
+      return;
+    }
+
     let i = startIdx;
     setShown(text.slice(0, i));
     setDone(false);
+    if (onStart) onStart(id);
 
     const iv = setInterval(() => {
       i += 3; // velocidad suave
@@ -77,19 +120,22 @@ function TypewriterMsg({ id, text, isNew, speed = 10 }: { id: number; text: stri
 
       if (i >= text.length) {
         clearInterval(iv);
-        setTimeout(() => setDone(true), 400);
+        setTimeout(() => {
+          setDone(true);
+          if (onEnd) onEnd(id);
+        }, 400);
       }
     }, speed);
 
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, text, isNew, speed]);
+  }, [id, text, isNew, speed, isCancelled]);
 
   return <div className="md-body" dangerouslySetInnerHTML={{ __html: parseMD(shown, !done) }} />;
 }
 
 // ── HELPERS ──
-const ts = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const ts = () => new Date().toLocaleTimeString('es-CL', { timeZone: 'America/Santiago', hour: "2-digit", minute: "2-digit", hour12: false });
 const uid = () => Math.random().toString(36).slice(2);
 
 function loadConvs(): Conversation[] {
@@ -102,43 +148,104 @@ function loadDocs(): DocEntry[] {
 }
 function saveDocs(d: DocEntry[]) { localStorage.setItem(DOCS_KEY, JSON.stringify(d)); }
 
+function formatTime(isoString: string) {
+  if (!isoString) return "";
+  if (!isoString.includes("T") && !isoString.includes("-")) return isoString;
+
+  const date = new Date(isoString);
+  const now = new Date();
+  
+  const isToday = date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+  
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday = date.getDate() === yesterday.getDate() && date.getMonth() === yesterday.getMonth() && date.getFullYear() === yesterday.getFullYear();
+
+  const timeStr = date.toLocaleTimeString('es-CL', { timeZone: 'America/Santiago', hour: '2-digit', minute: '2-digit', hour12: false });
+
+  if (isToday) return `Hoy a las ${timeStr}`;
+  if (isYesterday) return `Ayer a las ${timeStr}`;
+  
+  return `${date.toLocaleDateString()} a las ${timeStr}`;
+}
+
 // ════════════════════════════════════════════════════════
 export default function ChatPage() {
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [inputText, setInputText] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
+  const [typingConvId, setTypingConvId] = useState<string | null>(null);
+  const [typingMessageId, setTypingMessageId] = useState<number | null>(null);
+  const [cancelledMsgIds, setCancelledMsgIds] = useState<number[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [uploadedDoc, setUploadedDoc] = useState<DocEntry | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [toast, setToast] = useState({ show: false, msg: "" });
+  const [confirmDialog, setConfirmDialog] = useState<{ show: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const [user, setUser] = useState<any>(null);
+  const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
 
   // ── Init ──
   useEffect(() => {
-    let stored = loadConvs();
-    let aid = localStorage.getItem(ACTIVE_KEY) || "";
-
-    if (!stored.length) {
-      const first = makeNewConv();
-      stored = [first];
-      aid = first.id;
-      saveConvs(stored);
-    } else if (!stored.find(c => c.id === aid)) {
-      aid = stored[0].id;
+    const userStr = localStorage.getItem("user");
+    if (!userStr) {
+      window.location.href = '/';
+      return;
     }
+    const u = JSON.parse(userStr);
+    setUser(u);
 
-    setConvs(stored.map(c => ({ ...c, messages: c.messages.map(m => ({ ...m, isNew: false })) })));
-    setActiveId(aid);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (u.email) {
+      fetch(`${API_BASE}/chat/history/${u.email}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.conversations && data.conversations.length > 0) {
+            setConvs(data.conversations.map((c: any) => ({ ...c, messages: c.messages.map((m: any) => ({ ...m, isNew: false })) })));
+            const active = localStorage.getItem(ACTIVE_KEY);
+            if (active && data.conversations.find((c: any) => c.id === active)) {
+              setActiveId(active);
+            } else {
+              setActiveId(data.conversations[0].id);
+            }
+          } else {
+            setConvs([]);
+          }
+          setIsHistoryLoaded(true);
+        })
+        .catch(e => {
+          console.error("Error fetching history", e);
+          setIsHistoryLoaded(true);
+        });
+    } else {
+      let stored = loadConvs();
+      let aid = localStorage.getItem(ACTIVE_KEY) || "";
+      if (stored.length > 0) {
+        if (!stored.find(c => c.id === aid)) aid = stored[0].id;
+      } else { aid = ""; }
+      setConvs(stored.map(c => ({ ...c, messages: c.messages.map(m => ({ ...m, isNew: false })) })));
+      setActiveId(aid);
+      setIsHistoryLoaded(true);
+    }
   }, []);
 
-  useEffect(() => { if (convs.length) saveConvs(convs); }, [convs]);
-  useEffect(() => { if (activeId) localStorage.setItem(ACTIVE_KEY, activeId); }, [activeId]);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [convs, isTyping, activeId]);
+  useEffect(() => { 
+    saveConvs(convs); 
+    if (isHistoryLoaded && user?.email) {
+      fetch(`${API_BASE}/chat/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_email: user.email, conversations: convs })
+      }).catch(e => console.error("Error syncing", e));
+    }
+  }, [convs, isHistoryLoaded, user]);
+  useEffect(() => { if (activeId) localStorage.setItem(ACTIVE_KEY, activeId); else localStorage.removeItem(ACTIVE_KEY); }, [activeId]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [convs, typingConvId, activeId]);
   useEffect(() => {
     const ta = taRef.current; if (!ta) return;
     ta.style.height = "auto";
@@ -153,15 +260,16 @@ export default function ChatPage() {
     setUploadedDoc(doc);
   }, [activeId]);
 
-  function makeNewConv(): Conversation {
-    return { id: uid(), title: "Nueva conversación", createdAt: Date.now(), messages: [{ id: 1, sender: "ai", text: WELCOME_MSG, time: ts() }] };
+  function makeNewConv(u?: any): Conversation {
+    const userName = u?.name || u?.username || "";
+    return { id: uid(), title: "Nueva conversación", createdAt: Date.now(), messages: [{ id: 1, sender: "ai", text: getWelcomeMsg(userName), time: ts() }] };
   }
 
   const activeConv = convs.find(c => c.id === activeId);
   const messages = activeConv?.messages ?? [];
 
   function addNewChat() {
-    const c = makeNewConv();
+    const c = makeNewConv(user);
     setConvs(prev => [c, ...prev]);
     setActiveId(c.id);
     setInputText("");
@@ -169,7 +277,19 @@ export default function ChatPage() {
     setPendingFile(null);
   }
 
-  function deleteConv(id: string) {
+  function reqDeleteConv(id: string) {
+    setConfirmDialog({
+      show: true,
+      title: "Eliminar Chat",
+      message: "¿Estás seguro de que deseas eliminar este chat? Esta acción no se puede deshacer.",
+      onConfirm: () => {
+        executeDeleteConv(id);
+        setConfirmDialog(null);
+      }
+    });
+  }
+
+  function executeDeleteConv(id: string) {
     let newActiveId = activeId;
     setConvs(prev => {
       const next = prev.filter(c => c.id !== id);
@@ -179,10 +299,8 @@ export default function ChatPage() {
           setActiveId(newActiveId);
         }
         else {
-          const fresh = makeNewConv();
-          newActiveId = fresh.id;
+          newActiveId = "";
           setActiveId(newActiveId);
-          return [fresh];
         }
       }
       return next;
@@ -219,13 +337,17 @@ export default function ChatPage() {
   };
 
   // ── Send mensaje al backend ──
-  const sendToAPI = useCallback(async (prompt: string, targetConvId: string, isFirstMsg: boolean, contextText: string = "") => {
-    setIsTyping(true);
+  const sendToAPI = useCallback(async (prompt: string, targetConvId: string, isFirstMsg: boolean, contextText: string = "", chatHistory: any[] = []) => {
+    setTypingConvId(targetConvId);
+    abortControllerRef.current = new AbortController();
     try {
+      const userStr = localStorage.getItem("user");
+      const userObj = userStr ? JSON.parse(userStr) : null;
       const res = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: prompt, context: contextText })
+        body: JSON.stringify({ message: prompt, context: contextText, history: chatHistory, user_email: userObj?.email || null }),
+        signal: abortControllerRef.current.signal
       });
       const data = await res.json();
       const aiMsg: Message = { id: Date.now() + 1, sender: "ai", text: data.text || "Sin respuesta del servidor.", time: ts(), isNew: true };
@@ -236,21 +358,26 @@ export default function ChatPage() {
       // Si es el primer mensaje, generamos título inteligente de fondo
       if (isFirstMsg) generateTitle(targetConvId, prompt);
 
-    } catch {
-      appendMsgToConv(targetConvId, { id: Date.now() + 1, sender: "ai", text: "❌ **Error de conexión** con el backend.", time: ts(), isNew: true });
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        appendMsgToConv(targetConvId, { id: Date.now() + 1, sender: "ai", text: "⚠️ **Generación cancelada por el usuario.**", time: ts(), isNew: false });
+      } else {
+        appendMsgToConv(targetConvId, { id: Date.now() + 1, sender: "ai", text: "❌ **Error de conexión** con el backend.", time: ts(), isNew: true });
+      }
     } finally {
-      setIsTyping(false);
+      setTypingConvId(null);
+      abortControllerRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSend = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if ((!inputText.trim() && !pendingFile) || isTyping || isUploading) return;
+    if ((!inputText.trim() && !pendingFile) || typingConvId || isUploading) return;
 
     let targetConvId = activeId;
     if (!targetConvId) {
-      const c = makeNewConv();
+      const c = makeNewConv(user);
       setConvs(prev => [c, ...prev]);
       setActiveId(c.id);
       targetConvId = c.id;
@@ -305,13 +432,25 @@ export default function ChatPage() {
     // 3️⃣ Preparar el prompt final para la IA
     const docContextMessage = contextToSend && !pendingFile ? `\n\n[Contexto activo de la conversación: Documento "${uploadedDoc?.name}"]` : "";
     const isFirstMsg = messages.length === 0 || messages.length === 1;
+    const chatHistory = messages.map(m => ({ sender: m.sender, text: m.text })).slice(-10);
 
-    await sendToAPI(finalPrompt + docContextMessage, targetConvId, isFirstMsg, contextToSend);
+    await sendToAPI(finalPrompt + docContextMessage, targetConvId, isFirstMsg, contextToSend, chatHistory);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputText, isTyping, isUploading, activeId, messages, uploadedDoc, pendingFile, sendToAPI]);
+  }, [inputText, typingConvId, isUploading, activeId, messages, uploadedDoc, pendingFile, sendToAPI]);
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e as unknown as React.FormEvent); }
+  };
+
+  const handleCancel = () => {
+    if (typingConvId) {
+      // Cancelar petición fetch
+      abortControllerRef.current?.abort();
+    } else if (typingMessageId) {
+      // Cancelar typewriter animation
+      setCancelledMsgIds(prev => [...prev, typingMessageId]);
+      setTypingMessageId(null);
+    }
   };
 
   // ── Seleccionar archivo — SOLO lo guarda en estado (pendingFile) ──
@@ -332,6 +471,10 @@ export default function ChatPage() {
   }, [activeId]);
 
   // ════════════════ RENDER ════════════════
+  if (!isHistoryLoaded) {
+    return <div style={{ height: "100vh", backgroundColor: "#020817" }} />;
+  }
+
   return (
     <div className="chatgpt-root">
 
@@ -382,7 +525,7 @@ export default function ChatPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
                   </svg>
                   <span className="history-title">{conv.title}</span>
-                  <button className="history-del" onClick={ev => { ev.stopPropagation(); deleteConv(conv.id); }} title="Eliminar">
+                  <button className="history-del" onClick={ev => { ev.stopPropagation(); reqDeleteConv(conv.id); }} title="Eliminar">
                     <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
@@ -395,29 +538,53 @@ export default function ChatPage() {
 
         {/* Footer — solo cuando está abierto */}
         {sidebarOpen && (
-          <div className="sidebar-footer">
-            <span className="sidebar-badge">🤖 GPT-4o</span>
-            <span className="sidebar-badge sidebar-badge--db">🗄️ Vector DB</span>
-            <button onClick={() => { localStorage.removeItem("user"); window.location.href = '/'; }} style={{ marginLeft: 'auto', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#ef4444', padding: '0.4rem 0.8rem', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', transition: 'all 0.2s' }}>Cerrar Sesión</button>
+          <div className="sidebar-footer" style={{ padding: '1rem', borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: 'auto' }}>
+            {user && (
+              <div className="user-profile" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', marginBottom: '10px' }}>
+                {user.picture ? (
+                  <img src={user.picture} alt="Profile" referrerPolicy="no-referrer" style={{ width: '36px', height: '36px', borderRadius: '50%', border: '1px solid rgba(56,189,248,0.3)' }} />
+                ) : (
+                  <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg, #0ea5e9, #6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', color: '#fff', fontSize: '1rem' }}>
+                    {user.username?.charAt(0).toUpperCase() || 'U'}
+                  </div>
+                )}
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#f8fafc', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{user.name || user.username}</div>
+                  <div style={{ fontSize: '0.7rem', color: '#94a3b8', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{user.email || user.role}</div>
+                </div>
+              </div>
+            )}
+            <button className="logout-btn" onClick={() => { localStorage.removeItem("user"); window.location.href = '/'; }}>
+              <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              <span>Cerrar Sesión</span>
+            </button>
           </div>
         )}
       </aside>
 
       {/* ══════════════ MAIN CHAT ══════════════ */}
       <main className="chat-main">
-
-        {/* Header */}
+        
+        {!activeId ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", animation: "msg-in-left 0.4s ease" }}>
+            <img src={LOGO_SRC} alt="AuditorIA" style={{ width: "90px", borderRadius: "24px", marginBottom: "24px", boxShadow: "0 10px 40px rgba(99,102,241,0.2)" }} />
+            <h2 style={{ fontSize: "28px", fontWeight: "800", marginBottom: "12px", color: "var(--text)" }}>Bienvenido a <span className="grad-text">Auditor</span><span className="grad-ia">IA</span></h2>
+            <p style={{ color: "var(--muted)", marginBottom: "30px", fontSize: "15px" }}>Comienza creando una nueva conversación para auditar.</p>
+            <button className="new-chat-btn" onClick={addNewChat} style={{ margin: 0, padding: "14px 28px", fontSize: "15px" }}>
+              + Crear Nueva Auditoría
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Header */}
         <div className="chat-header">
           <div className="chat-header-left">
             <span className="online-dot" />
             <span className="chat-header-title">{activeConv?.title ?? "AuditorIA"}</span>
           </div>
           <div className="chat-header-right">
-            {uploadedDoc && (
-              <span className="doc-pill" title={uploadedDoc.name}>
-                📎 {uploadedDoc.name.length > 22 ? uploadedDoc.name.slice(0, 22) + "…" : uploadedDoc.name}
-              </span>
-            )}
             <span className="header-version">v1.0 Beta</span>
             <span className="online-badge">● Online</span>
           </div>
@@ -450,15 +617,29 @@ export default function ChatPage() {
                 )}
 
                 {msg.sender === "ai"
-                  ? <TypewriterMsg id={msg.id} text={msg.text} isNew={msg.isNew} speed={10} />
+                  ? <TypewriterMsg 
+                      id={msg.id} 
+                      text={msg.text} 
+                      isNew={msg.isNew} 
+                      speed={10} 
+                      isCancelled={cancelledMsgIds.includes(msg.id)}
+                      onStart={(id) => setTypingMessageId(id)}
+                      onEnd={(id) => setTypingMessageId(prev => prev === id ? null : prev)}
+                      onSavePartial={(id, partial) => {
+                         setConvs(prev => prev.map(c => ({
+                           ...c,
+                           messages: c.messages.map(m => m.id === id ? { ...m, text: partial, isNew: false } : m)
+                         })));
+                      }}
+                    />
                   : (msg.text ? <div className="md-body" dangerouslySetInnerHTML={{ __html: parseMD(msg.text) }} /> : null)
                 }
-                <span className="msg-time">{msg.time}</span>
+                <span className="msg-time">{formatTime(msg.time)}</span>
               </div>
             </div>
           ))}
 
-          {isTyping && (
+          {typingConvId === activeId && (
             <div className="msg-row msg-row--ai">
               <div className="ai-avatar">
                 <img src={LOGO_SRC} alt="AI" />
@@ -488,26 +669,36 @@ export default function ChatPage() {
             )}
 
             <div style={{ display: "flex", gap: "8px", alignItems: "flex-end" }}>
-              <button type="button" className="attach-btn" onClick={() => fileRef.current?.click()} disabled={isUploading || isTyping} title="Adjuntar PDF o Word para auditar">
+              <button type="button" className="attach-btn" onClick={() => fileRef.current?.click()} disabled={isUploading || !!typingConvId} title="Adjuntar PDF o Word para auditar">
                 {isUploading
                   ? <svg className="spin" width="16" height="16" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity=".25" /><path fill="currentColor" d="M4 12a8 8 0 018-8v8z" opacity=".75" /></svg>
                   : <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>}
               </button>
-              <form onSubmit={handleSend} style={{ flex: 1, display: "flex", gap: "8px", alignItems: "flex-end" }}>
+              <form onSubmit={handleSend} style={{ flex: 1, display: "flex", gap: "8px", alignItems: "flex-end", position: "relative" }}>
                 <textarea
                   ref={taRef} rows={1}
                   value={inputText}
                   onChange={e => setInputText(e.target.value)}
                   onKeyDown={handleKey}
-                  disabled={isUploading || isTyping}
+                  disabled={isUploading || !!typingConvId}
                   placeholder={pendingFile ? "Escribe algo sobre el documento..." : (uploadedDoc ? `Pregunta sobre "${uploadedDoc.name}"…` : "Envía un mensaje o adjunta un documento para auditar…")}
                   className="chat-input"
                 />
-                <button type="submit" disabled={(!inputText.trim() && !pendingFile) || isTyping || isUploading} className="send-btn">
-                  <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24" style={{ transform: "rotate(45deg)" }}>
-                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                  </svg>
-                </button>
+                
+                {(typingConvId || typingMessageId) ? (
+                  <button type="button" onClick={handleCancel} className="cancel-btn" title="Detener generación">
+                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24">
+                      <rect x="5" y="5" width="14" height="14" rx="2" />
+                    </svg>
+                    <span className="cancel-text">Detener</span>
+                  </button>
+                ) : (
+                  <button type="submit" disabled={(!inputText.trim() && !pendingFile) || !!typingConvId || isUploading} className="send-btn">
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24" className="send-icon">
+                      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                    </svg>
+                  </button>
+                )}
               </form>
             </div>
           </div>
@@ -529,7 +720,106 @@ export default function ChatPage() {
           <span>{toast.msg}</span>
         </div>
 
+          </>
+        )}
+
       </main>
+
+      {/* Modal de Confirmación Global */}
+      {confirmDialog && confirmDialog.show && (
+        <div className="modal-overlay" style={{ zIndex: 999999 }}>
+          <div className="modal-content">
+            <h3>{confirmDialog.title}</h3>
+            <p>{confirmDialog.message}</p>
+            <div className="modal-actions">
+              <button className="btn-cancel" onClick={() => setConfirmDialog(null)}>Cancelar</button>
+              <button className="btn-confirm" onClick={confirmDialog.onConfirm}>Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style dangerouslySetInnerHTML={{__html: `
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.6);
+          backdrop-filter: blur(5px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 999999;
+          animation: fadeIn 0.2s ease-out;
+        }
+
+        .modal-content {
+          background: rgba(15, 23, 42, 0.95);
+          border: 1px solid rgba(56, 189, 248, 0.2);
+          border-radius: 16px;
+          padding: 24px;
+          width: 90%;
+          max-width: 400px;
+          box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+          animation: slideUpFade 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+          text-align: center;
+        }
+
+        .modal-content h3 {
+          color: #f8fafc;
+          margin-top: 0;
+          margin-bottom: 12px;
+          font-size: 1.25rem;
+        }
+
+        .modal-content p {
+          color: #94a3b8;
+          font-size: 0.95rem;
+          margin-bottom: 24px;
+          line-height: 1.5;
+        }
+
+        .modal-actions {
+          display: flex;
+          gap: 12px;
+          justify-content: center;
+        }
+
+        .modal-actions button {
+          padding: 10px 20px;
+          border-radius: 8px;
+          font-weight: 600;
+          font-size: 0.9rem;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .btn-cancel {
+          background: transparent;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          color: #cbd5e1;
+        }
+
+        .btn-cancel:hover {
+          background: rgba(255, 255, 255, 0.05);
+        }
+
+        .btn-confirm {
+          background: linear-gradient(135deg, #38bdf8 0%, #6366f1 100%);
+          border: none;
+          color: white;
+          box-shadow: 0 4px 15px rgba(56, 189, 248, 0.3);
+        }
+
+        .btn-confirm:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 6px 20px rgba(56, 189, 248, 0.4);
+        }
+
+        @keyframes slideUpFade {
+          from { opacity: 0; transform: translateY(20px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+      `}} />
     </div>
   );
 }

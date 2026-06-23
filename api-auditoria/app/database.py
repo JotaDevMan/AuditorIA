@@ -16,10 +16,16 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 class Settings(BaseSettings):
     # Esto leerá las variables de tu archivo .env automáticamente
     OPENAI_API_KEY: str = ""
-    GEMINI_API_KEY: str = "AQ.Ab8RN6ITbKDG4HyRqc7OopGclRljbBgmL0EAiv_inVRYiF3fRw"
-    OPENROUTER_API_KEY: str = "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"
+    GEMINI_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
     PG_DATABASE_URL: str = "postgresql+pg8000://postgres:12345@localhost:5432/auditoria_db"
-    VECTOR_DB_PATH: str = "./chroma_db"
+    CHROMA_API_KEY: str = ""
+    CHROMA_TENANT: str = ""
+    CHROMA_DATABASE: str = "AuditorIA"
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    HUGGINGFACE_API_KEY: str = ""
+    COHERE_API_KEY: str = ""
 
     class Config:
         env_file = ".env"

@@ -32,7 +32,7 @@ const FEATURES = [
   { icon:"🗄️", bg:"rgba(239,68,68,.12)",   title:"Base de Conocimiento",   desc:"Administradores alimentan el sistema con normativas. Cada documento potencia las respuestas del LLM." },
 ];
 
-const NORMS = ["ISO 27001","ISO 27002","ISO 9001","COBIT 5","COBIT 2019","ITIL v4","NIST CSF","SOC 2","PCI-DSS","GDPR","Ley 1273","HIPAA","ISO 31000"];
+const NORMS = ["ISO 27001","ISO 27002","ISO 9001", "COBIT 2019","ITIL","NIST CSF","ISO 25040","ISO 12207","GDPR","ISO 14764","Ley Proteccion de datos","OWASP Top 10"];
 
 const PIPELINE = [
   { title:"Carga de documentos",       desc:"El usuario sube PDFs o Word desde la interfaz. El administrador también puede ingresar normativas y estándares internacionales.",  tag:"FastAPI Upload", tagColor:"rgba(56,189,248,.15)", tagText:"#38bdf8" },
@@ -181,22 +181,89 @@ export default function LandingPage() {
   const [password,  setPassword]  = useState("");
   const [error,     setError]     = useState("");
   const [loading,   setLoading]   = useState(false);
+  const [csrfToken, setCsrfToken] = useState("");
   const router = useRouter();
   useReveal();
+
+  useEffect(() => {
+    // 🛡️ OBTENER TOKEN CSRF
+    fetch("http://localhost:8000/api/v1/auth/csrf-token")
+      .then(res => res.json())
+      .then(data => setCsrfToken(data.csrf_token))
+      .catch(console.error);
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); setError(""); setLoading(true);
     try {
       const res  = await fetch("http://localhost:8000/api/v1/auth/login", {
-        method:"POST", headers:{"Content-Type":"application/json"},
+        method:"POST", 
+        headers:{
+          "Content-Type":"application/json",
+          "X-CSRF-Token": csrfToken
+        },
         body: JSON.stringify({ username, password }),
       });
       const data = await res.json();
       if (res.ok) {
-        localStorage.setItem("user", JSON.stringify({ username: data.username, role: data.role }));
+        localStorage.setItem("user", JSON.stringify({ username: data.username, role: data.role, email: data.email }));
         router.push(data.role === "administrador" ? "/admin" : "/chat");
       } else {
         setError(data.detail || "Credenciales incorrectas.");
+      }
+    } catch (err) {
+      setError("Error de red.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const initGoogle = () => {
+      if ((window as any).google && showLogin) {
+        (window as any).google.accounts.id.initialize({
+          client_id: "71127126918-mp8s13oqo2lbuifrt4elf3ei9jueb7q8.apps.googleusercontent.com",
+          callback: handleGoogleCredentialResponse
+        });
+        (window as any).google.accounts.id.renderButton(
+          document.getElementById("google-button-container"),
+          { theme: "filled_blue", size: "large", width: "100%", shape: "rectangular", text: "continue_with" }
+        );
+      }
+    };
+    if (showLogin) {
+       if ((window as any).google) initGoogle();
+       else {
+         const script = document.createElement("script");
+         script.src = "https://accounts.google.com/gsi/client";
+         script.async = true;
+         script.onload = initGoogle;
+         document.body.appendChild(script);
+       }
+    }
+  }, [showLogin]);
+
+  const handleGoogleCredentialResponse = async (response: any) => {
+    setError(""); setLoading(true);
+    try {
+      const jwt = response.credential;
+      const base64Url = jwt.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(''));
+      const payload = JSON.parse(jsonPayload);
+      
+      const res = await fetch("http://localhost:8000/api/v1/auth/login/google", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ email: payload.email, name: payload.name, picture: payload.picture })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        localStorage.setItem("user", JSON.stringify({ username: data.username, role: data.role, email: data.email, picture: data.picture }));
+        router.push(data.role === "administrador" ? "/admin" : "/chat");
+      } else {
+        setError(data.detail || "Error al iniciar sesión con Google.");
       }
     } catch { setError("Error de conexión con el servidor."); }
     finally   { setLoading(false); }
@@ -348,47 +415,57 @@ export default function LandingPage() {
       {showLogin && (
         <div className="overlay" onClick={e => { if(e.target===e.currentTarget) setShowLogin(false); }}>
           <div className="modal">
-            <button className="modal-close" onClick={() => setShowLogin(false)}>✕</button>
-            <a href="/" style={{ textDecoration: 'none', display: 'flex', justifyContent: 'center', marginBottom: '0.5rem' }}>
-              <img src="/AuditorIA.jpg" alt="AuditorIA" style={{ height: '48px', borderRadius: '12px', border: '2px solid rgba(56,189,248,0.3)' }} />
-            </a>
-            <a href="/" style={{ textDecoration: 'none' }}><div className="modal-logo">AuditorIA</div></a>
-            <p className="modal-sub">Ingresa tus credenciales para continuar</p>
+            <div className="modal-content-wrapper">
+              <button className="modal-close" onClick={() => setShowLogin(false)}>✕</button>
+              <a href="/" style={{ textDecoration: 'none', display: 'flex', justifyContent: 'center', marginBottom: '0.5rem' }}>
+                <img src="/AuditorIA.jpg" alt="AuditorIA" className="modal-logo-img" />
+              </a>
+              <a href="/" style={{ textDecoration: 'none' }}><div className="modal-logo">AuditorIA</div></a>
+              <p className="modal-sub">Ingresa tus credenciales para continuar</p>
 
-            <form onSubmit={handleLogin}>
-              {error && <div className="form-error">⚠️ {error}</div>}
-              
-              <div style={{ marginBottom: '1.25rem' }}>
-                <label className="form-label" htmlFor="usr">Usuario</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: '1.1rem' }}>👤</span>
-                  <input id="usr" type="text" className="form-input" style={{ paddingLeft: '2.8rem' }} placeholder="Ingresa tu usuario"
-                    value={username} onChange={e => setUsername(e.target.value)} required autoComplete="username"/>
+              <form onSubmit={handleLogin}>
+                {error && <div className="form-error">⚠️ {error}</div>}
+                
+                <div className="input-wrapper">
+                  <label className="form-label" htmlFor="usr">Usuario</label>
+                  <div style={{ position: 'relative' }}>
+                    <span className="input-icon">👤</span>
+                    <input id="usr" type="text" className="form-input" placeholder="Ingresa tu usuario"
+                      value={username} onChange={e => setUsername(e.target.value)} required autoComplete="username"/>
+                  </div>
                 </div>
-              </div>
 
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label className="form-label" htmlFor="pwd">Contraseña</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: '1.1rem' }}>🔒</span>
-                  <input id="pwd" type="password" className="form-input" style={{ paddingLeft: '2.8rem' }} placeholder="••••••••"
-                    value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password"/>
+                <div className="input-wrapper">
+                  <label className="form-label" htmlFor="pwd">Contraseña</label>
+                  <div style={{ position: 'relative' }}>
+                    <span className="input-icon">🔒</span>
+                    <input id="pwd" type="password" className="form-input" placeholder="••••••••"
+                      value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password"/>
+                  </div>
                 </div>
+
+                <button type="submit" className="submit-btn" disabled={loading}>
+                  {loading ? "Verificando..." : "Iniciar Sesión →"}
+                </button>
+              </form>
+
+              <div className="divider-container" style={{ display: 'flex', alignItems: 'center', margin: '1rem 0' }}>
+                <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }}></div>
+                <span style={{ margin: '0 1rem', color: '#64748b', fontSize: '0.85rem' }}>o continuar con</span>
+                <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }}></div>
               </div>
 
-              <button type="submit" className="submit-btn" disabled={loading}>
-                {loading ? "Verificando..." : "Iniciar Sesión →"}
-              </button>
-            </form>
+              <div id="google-button-container" style={{ display: 'flex', justifyContent: 'center' }}></div>
 
-            <div className="modal-hint">
-              <div className="hint-row">
-                <span className="role-badge" style={{background:"rgba(56,189,248,.15)",color:"#38bdf8"}}>USUARIO</span>
-                <span>user: <code>usuario1</code> / pass: <code>usuario1</code></span>
-              </div>
-              <div className="hint-row">
-                <span className="role-badge" style={{background:"rgba(239,68,68,.15)",color:"#ef4444"}}>ADMIN</span>
-                <span>user: <code>admin123</code> / pass: <code>admin123</code></span>
+              <div className="modal-hint">
+                <div className="hint-row">
+                  <span className="role-badge" style={{background:"rgba(56,189,248,.15)",color:"#38bdf8"}}>USUARIO</span>
+                  <span>user: <code>usuario1</code> / pass: <code>usuario1</code></span>
+                </div>
+                <div className="hint-row">
+                  <span className="role-badge" style={{background:"rgba(239,68,68,.15)",color:"#ef4444"}}>ADMIN</span>
+                  <span>user: <code>admin123</code> / pass: <code>admin123</code></span>
+                </div>
               </div>
             </div>
           </div>
