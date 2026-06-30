@@ -1,307 +1,476 @@
 "use client";
+import React, { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import "./landing.css";
 
-import React, { useState, useRef } from 'react';
+// ── Terminal lines ──
+const TERM_LINES = [
+  { delay: 300,  type: "cmd",  text: "auditor-ia --init sistema" },
+  { delay: 900,  type: "out",  text: "✔  Conectando con ChromaDB Vector Store..." },
+  { delay: 1500, type: "out",  text: "✔  Cargando modelos de embeddings HuggingFace..." },
+  { delay: 2100, type: "out",  text: "✔  Indexando normativas ISO 27001 / COBIT 5..." },
+  { delay: 2700, type: "warn", text: "⚡  Pipeline RAG activo — LLM listo para consultas" },
+  { delay: 3300, type: "cmd",  text: "auditor-ia --analyze docs/sistema.pdf" },
+  { delay: 4000, type: "out",  text: "✔  Fragmentando en 347 chunks semánticos..." },
+  { delay: 4600, type: "out",  text: "✔  Hallazgos detectados: 12 riesgos críticos" },
+  { delay: 5200, type: "out",  text: "✔  Plan de auditoría generado bajo ISO 27001:2022" },
+];
 
-// ==========================================
-// VARIABLES DE CONFIGURACIÓN DEL CHAT
-// ==========================================
-const SYSTEM_NAME = "AuditorIA Premium";
-const LLM_MODEL = "GPT-4o (Stable)";   
-const VECTOR_DB = "ChromaDB";          
-const WELCOME_MESSAGE = `¡Hola! Soy tu asistente auditor inteligente. He sido entrenado para evaluar procesos y código mediante las normas indexadas. ¿Qué te gustaría auditar hoy?`;
+const METRICS = [
+  { label: "Precisión",   val: 97.4, w: "97%",  color: "#38bdf8" },
+  { label: "Recall",      val: 94.1, w: "94%",  color: "#818cf8" },
+  { label: "F1-Score",    val: 95.7, w: "96%",  color: "#10b981" },
+  { label: "Embeddings",  val: 88.0, w: "88%",  color: "#f472b6" },
+];
 
-interface Message {
-  id: number;
-  sender: 'user' | 'ai';
-  text: string;
-  time: string;
-  isNew?: boolean;
+const FEATURES = [
+  { icon:"📄", bg:"rgba(56,189,248,.12)",  title:"Análisis de Documentos", desc:"Sube PDFs y Word de tu sistema. La IA vectoriza y extrae el contexto de cada página para auditoría precisa." },
+  { icon:"🔍", bg:"rgba(129,140,248,.12)", title:"Detección de Riesgos",   desc:"Identifica vulnerabilidades, brechas de control y no conformidades usando similitud semántica." },
+  { icon:"📋", bg:"rgba(244,114,182,.12)", title:"Plan de Auditoría ISO",  desc:"Genera planes estructurados con controles específicos bajo ISO 27001, COBIT 2019 e ITIL v4." },
+  { icon:"🛡️", bg:"rgba(52,211,153,.12)",  title:"Controles Correctivos",  desc:"Propuestas de mejora adaptadas al contexto real, priorizadas por nivel de riesgo." },
+  { icon:"💬", bg:"rgba(251,191,36,.12)",  title:"Chat Contextual RAG",    desc:"Pregunta sobre tus sistemas. La IA responde usando el conocimiento indexado de tus documentos." },
+  { icon:"🗄️", bg:"rgba(239,68,68,.12)",   title:"Base de Conocimiento",   desc:"Administradores alimentan el sistema con normativas. Cada documento potencia las respuestas del LLM." },
+];
+
+const NORMS = ["ISO 27001","ISO 27002","ISO 9001", "COBIT 2019","ITIL","NIST CSF","ISO 25040","ISO 12207","GDPR","ISO 14764","Ley Proteccion de datos","OWASP Top 10"];
+
+const PIPELINE = [
+  { title:"Carga de documentos",       desc:"El usuario sube PDFs o Word desde la interfaz. El administrador también puede ingresar normativas y estándares internacionales.",  tag:"FastAPI Upload", tagColor:"rgba(56,189,248,.15)", tagText:"#38bdf8" },
+  { title:"Fragmentación semántica",   desc:"Los documentos son divididos en chunks de 1000 tokens con solapamiento. Cada fragmento conserva contexto suficiente para respuestas precisas.", tag:"LangChain Splitter", tagColor:"rgba(129,140,248,.15)", tagText:"#818cf8" },
+  { title:"Vectorización y almacenamiento", desc:"Cada chunk es convertido en un vector de alta dimensión usando HuggingFace all-MiniLM-L6-v2 y almacenado en ChromaDB.", tag:"HuggingFace + ChromaDB", tagColor:"rgba(16,185,129,.15)", tagText:"#10b981" },
+  { title:"Generación con LLM (RAG)",  desc:"Al recibir una consulta, el sistema recupera los fragmentos más relevantes y los inyecta como contexto al LLM para una respuesta fundamentada.", tag:"LLM + RAG Pipeline", tagColor:"rgba(244,114,182,.15)", tagText:"#f472b6" },
+];
+
+// ── Canvas Neural Network Background ──
+function NeuralBackground() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current; if (!canvas) return;
+    const ctx = canvas.getContext("2d")!;
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+    const nodes = Array.from({length: 60}, () => ({
+      x: Math.random()*W, y: Math.random()*H,
+      vx: (Math.random()-.5)*.3, vy: (Math.random()-.5)*.3,
+      r: Math.random()*2+1,
+    }));
+    let raf: number;
+    function draw() {
+      ctx.clearRect(0,0,W,H);
+      nodes.forEach(n => {
+        n.x += n.vx; n.y += n.vy;
+        if(n.x<0||n.x>W) n.vx*=-1;
+        if(n.y<0||n.y>H) n.vy*=-1;
+      });
+      nodes.forEach((a,i) => nodes.slice(i+1).forEach(b => {
+        const d = Math.hypot(a.x-b.x, a.y-b.y);
+        if(d < 120) {
+          ctx.beginPath();
+          ctx.strokeStyle = `rgba(56,189,248,${.12*(1-d/120)})`;
+          ctx.lineWidth = .5;
+          ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+        }
+      }));
+      nodes.forEach(n => {
+        ctx.beginPath();
+        ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
+        ctx.fillStyle = "rgba(56,189,248,0.35)";
+        ctx.fill();
+      });
+      raf = requestAnimationFrame(draw);
+    }
+    draw();
+    const resize = () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; };
+    window.addEventListener("resize", resize);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+  }, []);
+  return <canvas id="bg-canvas" ref={canvasRef}/>;
 }
 
-const TypewriterText = ({ text, speed = 15, isNew }: { text: string, speed?: number, isNew?: boolean }) => {
-  const [displayedText, setDisplayedText] = useState(isNew ? "" : text);
+// ── Terminal component ──
+function Terminal() {
+  const [lines, setLines] = useState<typeof TERM_LINES>([]);
+  const [cursor, setCursor] = useState(true);
+  useEffect(() => {
+    const timers = TERM_LINES.map((l,i) => setTimeout(() => setLines(p => [...p, l]), l.delay));
+    const ci = setInterval(() => setCursor(c => !c), 500);
+    return () => { timers.forEach(clearTimeout); clearInterval(ci); };
+  }, []);
+  return (
+    <div className="terminal">
+      <div className="terminal-bar">
+        <span className="term-dot red"/><span className="term-dot yellow"/><span className="term-dot green"/>
+        <span className="term-title">auditoria-ia — bash — 80×24</span>
+      </div>
+      <div className="terminal-body">
+        {lines.map((l, i) => (
+          <div key={i} className="term-line show">
+            {l.type === "cmd"
+              ? <><span className="term-prompt">auditor@ia:~$</span><span className="term-cmd"> {l.text}</span></>
+              : l.type === "warn"
+              ? <span className="term-warn">{l.text}</span>
+              : <span className="term-out">{l.text}</span>
+            }
+          </div>
+        ))}
+        {lines.length < TERM_LINES.length && (
+          <div className="term-line show">
+            <span className="term-prompt">auditor@ia:~$</span>
+            <span className="term-cursor" style={{opacity: cursor?1:0}}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
-  React.useEffect(() => {
-    if (!isNew) {
-      setDisplayedText(text);
-      return;
-    }
-    let i = 0;
-    setDisplayedText("");
-    const interval = setInterval(() => {
-      setDisplayedText((prev) => text.substring(0, prev.length + 1));
-      i++;
-      if (i >= text.length) {
-        clearInterval(interval);
-      }
-    }, speed);
-    return () => clearInterval(interval);
-  }, [text, isNew, speed]);
+// ── Scroll reveal hook ──
+function useReveal() {
+  useEffect(() => {
+    const els = document.querySelectorAll(".reveal,.reveal-left,.reveal-right");
+    const obs = new IntersectionObserver(entries => {
+      entries.forEach(e => { if(e.isIntersecting) e.target.classList.add("visible"); });
+    }, { threshold: 0.15 });
+    els.forEach(el => obs.observe(el));
+    return () => obs.disconnect();
+  }, []);
+}
 
-  return <>{displayedText}</>;
-};
+// ── ML Visual ──
+function MLVisual() {
+  const layers = [
+    { nodes: 4, cls: "input",   label: "Input" },
+    { nodes: 5, cls: "hidden1", label: "Hidden 1" },
+    { nodes: 5, cls: "hidden2", label: "Hidden 2" },
+    { nodes: 2, cls: "output",  label: "Output" },
+  ];
+  return (
+    <div className="ml-visual">
+      <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:".7rem",color:"#334155",marginBottom:"1.5rem",letterSpacing:"1px"}}>
+        &gt; Neural Network Architecture — RAG Encoder
+      </p>
+      <div className="nn-container">
+        {layers.map(l => (
+          <div key={l.cls} className="nn-layer">
+            <span className="nn-label">{l.label}</span>
+            {Array.from({length: l.nodes}, (_,i) => (
+              <div key={i} className={`nn-node ${l.cls}`} style={{animationDelay:`${i*.15}s`}}/>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="ml-metrics">
+        {METRICS.map(m => (
+          <div key={m.label} className="metric-row">
+            <span className="metric-label">{m.label}</span>
+            <div className="metric-bar">
+              <div className="metric-fill" style={{width: m.w, background: `linear-gradient(90deg, ${m.color}, ${m.color}88)`}}/>
+            </div>
+            <span className="metric-val" style={{color: m.color}}>{m.val}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
-export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [role, setRole] = useState(null);
+// ════════════════════════════════
+export default function LandingPage() {
+  const [showLogin, setShowLogin] = useState(false);
+  const [username,  setUsername]  = useState("");
+  const [password,  setPassword]  = useState("");
+  const [error,     setError]     = useState("");
+  const [loading,   setLoading]   = useState(false);
+  const [csrfToken, setCsrfToken] = useState("");
+  const router = useRouter();
+  useReveal();
 
-
-  React.useEffect(() => {
-
-  const token = localStorage.getItem("token");
-
-  if (!token) {
-
-    window.location.href = "/login";
-  }
-
-  const savedRole = localStorage.getItem("role");
-
-  setRole(savedRole);
-
+  useEffect(() => {
+    // 🛡️ OBTENER TOKEN CSRF
+    fetch("http://localhost:8000/api/v1/auth/csrf-token")
+      .then(res => res.json())
+      .then(data => setCsrfToken(data.csrf_token))
+      .catch(console.error);
   }, []);
 
-  // Cargar historial al iniciar
-  React.useEffect(() => {
-    const saved = localStorage.getItem('auditoria_chat_history_v2');
-    if (saved) {
-      setMessages(JSON.parse(saved));
-    } else {
-      setMessages([{
-        id: 1,
-        sender: 'ai',
-        text: WELCOME_MESSAGE,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
-    }
-  }, []);
-
-  // Guardar historial al actualizar
-  React.useEffect(() => {
-    if (messages.length > 0) {
-      localStorage.setItem('auditoria_chat_history_v2', JSON.stringify(messages));
-    }
-  }, [messages]);
-
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputText.trim()) return;
-
-    const userMsg: Message = {
-      id: Date.now(),
-      sender: 'user',
-      text: inputText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-
-    setMessages(prev => [...prev, userMsg]);
-    setInputText('');
-    setIsTyping(true);
-
-    // Llamada a la API real de FastAPI
-    const token = localStorage.getItem("token");
-    fetch("http://localhost:8000/api/v1/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ message: inputText })
-    })
-    .then(res => res.json())
-    .then(data => {
-      const aiMsg: Message = {
-        id: Date.now() + 1,
-        sender: 'ai',
-        text: data.text || "Hubo un error en la respuesta del bot.",
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        isNew: true
-      };
-      setMessages(prev => [...prev, aiMsg]);
-    })
-    .catch(err => {
-      console.error(err);
-      const errMsg: Message = {
-        id: Date.now() + 1,
-        sender: 'ai',
-        text: "❌ Error de conexión: Asegúrate de que el backend FastAPI esté encendido en el puerto 8000.",
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-      setMessages(prev => [...prev, errMsg]);
-    })
-    .finally(() => {
-      setIsTyping(false);
-    });
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    const file = e.target.files[0];
-    
-    setIsUploading(true);
-    
-    const formData = new FormData();
-    formData.append("file", file);
-
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault(); setError(""); setLoading(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://localhost:8000/api/v1/documents/upload", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`
+      const res  = await fetch("http://localhost:8000/api/v1/auth/login", {
+        method:"POST", 
+        headers:{
+          "Content-Type":"application/json",
+          "X-CSRF-Token": csrfToken
         },
-        body: formData
+        body: JSON.stringify({ username, password }),
       });
+      const data = await res.json();
       if (res.ok) {
-        setMessages(prev => [...prev, {
-          id: Date.now(),
-          sender: 'ai',
-          text: `✅ Documento "${file.name}" subido e indexado correctamente en ChromaDB. Ya puedes hacerme preguntas sobre este documento.`,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isNew: true
-        }]);
+        localStorage.setItem("user", JSON.stringify({ username: data.username, role: data.role, email: data.email }));
+        router.push(data.role === "administrador" ? "/admin" : "/chat");
       } else {
-        throw new Error("Fallo al subir archivo");
+        setError(data.detail || "Credenciales incorrectas.");
       }
     } catch (err) {
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        sender: 'ai',
-        text: `❌ Hubo un error procesando el archivo "${file.name}". Verifica la conexión.`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
+      setError("Error de red.");
     } finally {
-      setIsUploading(false);
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    const initGoogle = () => {
+      if ((window as any).google && showLogin) {
+        (window as any).google.accounts.id.initialize({
+          client_id: "71127126918-mp8s13oqo2lbuifrt4elf3ei9jueb7q8.apps.googleusercontent.com",
+          callback: handleGoogleCredentialResponse
+        });
+        (window as any).google.accounts.id.renderButton(
+          document.getElementById("google-button-container"),
+          { theme: "filled_blue", size: "large", width: 350, shape: "rectangular", text: "continue_with" }
+        );
+      }
+    };
+    if (showLogin) {
+       if ((window as any).google) initGoogle();
+       else {
+         const script = document.createElement("script");
+         script.src = "https://accounts.google.com/gsi/client";
+         script.async = true;
+         script.onload = initGoogle;
+         document.body.appendChild(script);
+       }
+    }
+  }, [showLogin]);
+
+  const handleGoogleCredentialResponse = async (response: any) => {
+    setError(""); setLoading(true);
+    try {
+      const jwt = response.credential;
+      const base64Url = jwt.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(''));
+      const payload = JSON.parse(jsonPayload);
+      
+      const res = await fetch("http://localhost:8000/api/v1/auth/login/google", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ email: payload.email, name: payload.name, picture: payload.picture })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        localStorage.setItem("user", JSON.stringify({ username: data.username, role: data.role, email: data.email, picture: data.picture }));
+        router.push(data.role === "administrador" ? "/admin" : "/chat");
+      } else {
+        setError(data.detail || "Error al iniciar sesión con Google.");
+      }
+    } catch { setError("Error de conexión con el servidor."); }
+    finally   { setLoading(false); }
   };
 
   return (
-    <div className="flex-1 max-w-5xl mx-auto w-full flex flex-col space-y-4 min-h-[600px]">
-      
-      {/* PANEL PRINCIPAL DE INTERACCIÓN */}
-      <section className="flex-1 bg-[#0f0f13] border border-white/10 rounded-3xl flex flex-col overflow-hidden shadow-2xl backdrop-blur-xl relative">
-        
-        {/* Cabecera del Chat Premium */}
-        <div className="bg-white/[0.02] border-b border-white/10 px-8 py-5 flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-            </div>
-            <div>
-              <h3 className="font-bold text-[15px] text-white tracking-wide">{SYSTEM_NAME}</h3>
-              <p className="text-[11px] text-zinc-400 font-medium tracking-wider uppercase">Motor RAG Activo</p>
-            </div>
+    <>
+      <NeuralBackground/>
+
+      {/* NAV */}
+      <nav className="nav">
+        <a href="/" style={{ textDecoration: 'none' }}>
+          <div className="nav-brand" style={{ display: 'flex', alignItems: 'center' }}>
+            <img src="/AuditorIA.jpg" alt="AuditorIA" style={{ height: '38px', borderRadius: '8px', marginRight: '0.6rem', border: '1px solid rgba(56,189,248,0.3)' }} />
+            AuditorIA
           </div>
-          <div className="flex items-center space-x-3">
-            <span className="text-xs bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-3 py-1.5 rounded-full font-mono shadow-inner">
-              🤖 {LLM_MODEL}
-            </span>
-            <span className="text-xs bg-rose-500/10 text-rose-300 border border-rose-500/20 px-3 py-1.5 rounded-full font-mono hidden sm:inline shadow-inner">
-              🗄️ {VECTOR_DB}
-            </span>
-          </div>
+        </a>
+        <ul className="nav-links">
+          <li><a href="#features">Funciones</a></li>
+          <li><a href="#pipeline">Pipeline</a></li>
+          <li><a href="#norms">Normas</a></li>
+        </ul>
+        <button className="nav-cta" onClick={() => setShowLogin(true)}>Iniciar Sesión →</button>
+      </nav>
+
+      {/* HERO */}
+      <section className="hero">
+        <div className="badge"><span className="badge-dot"/> IA especializada en Auditoría de Sistemas</div>
+        <h1 className="hero-title">
+          Audita tu sistema con el poder de la{" "}
+          <span className="grad">Inteligencia Artificial</span>
+        </h1>
+        <p className="hero-sub">
+          AuditorIA analiza tus documentos, detecta vulnerabilidades y genera planes de auditoría profesionales
+          basados en <strong style={{color:"#94a3b8"}}>ISO 27001</strong>, <strong style={{color:"#94a3b8"}}>COBIT</strong> e <strong style={{color:"#94a3b8"}}>ITIL</strong> — todo en segundos.
+        </p>
+        <Terminal/>
+        <div className="hero-cta">
+          <button className="btn-primary" onClick={() => setShowLogin(true)}>
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+            Iniciar Sesión
+          </button>
+          <button className="btn-ghost" onClick={() => document.getElementById("features")?.scrollIntoView({behavior:"smooth"})}>
+            Ver funcionalidades ↓
+          </button>
         </div>
-
-        {/* Caja de Mensajes */}
-        <div className="flex-1 p-8 space-y-6 overflow-y-auto max-h-[500px] min-h-[400px] scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-          {messages.map((msg) => (
-            <div 
-              key={msg.id} 
-              className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div className={`max-w-[80%] rounded-2xl p-5 text-[15px] leading-relaxed shadow-xl transition-all duration-300 ${
-                msg.sender === 'user' 
-                  ? 'bg-gradient-to-br from-indigo-600 to-violet-600 text-white rounded-tr-sm border border-indigo-400/20 shadow-indigo-500/10' 
-                  : 'bg-zinc-900/90 backdrop-blur-xl border border-zinc-700/50 rounded-tl-sm text-zinc-100 shadow-black/50'
-              }`}>
-                <p className="whitespace-pre-wrap">
-                  {msg.sender === 'ai' ? (
-                    <TypewriterText text={msg.text} isNew={msg.isNew} speed={15} />
-                  ) : (
-                    msg.text
-                  )}
-                </p>
-                <span className="block text-[10px] text-right mt-3 opacity-50 font-mono tracking-wider">
-                  {msg.time}
-                </span>
-              </div>
-            </div>
-          ))}
-          {isTyping && (
-            <div className="flex justify-start">
-              <div className="bg-zinc-900/80 border border-zinc-700/50 rounded-2xl rounded-tl-sm p-5 text-sm text-zinc-400 flex items-center space-x-3">
-                <div className="flex space-x-1">
-                  <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce"></div>
-                  <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                  <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                </div>
-                <span>Analizando contexto de auditoría...</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Input de Entrada de Texto + Adjuntar */}
-        <div className="p-4 bg-zinc-950/80 border-t border-white/10">
-          <form onSubmit={handleSendMessage} className="flex items-center space-x-3 max-w-4xl mx-auto w-full">
-            
-            {/* Input File Oculto */}
-            <input 
-              type="file" 
-              accept=".pdf"
-              className="hidden" 
-              ref={fileInputRef} 
-              onChange={handleFileUpload} 
-            />
-
-            {/* Botón de Adjuntar PDF (NUEVO) */}
-            {role === "admin" && (
-            <button 
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading || isTyping}
-              className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white transition duration-200 flex-shrink-0 disabled:opacity-50"
-              title="Adjuntar norma ISO o documento PDF"
-            >
-              {isUploading ? (
-                <span className="animate-spin text-xl">⏳</span>
-              ) : (
-                <span className="text-xl">📎</span>
-              )}
-            </button>
-            )}
-
-            {/* Barra de Texto */}
-            <input 
-              type="text" 
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              disabled={isUploading || isTyping}
-              placeholder={`Solicita una auditoría o pregúntame sobre los documentos...`} 
-              className="flex-1 bg-zinc-900/50 backdrop-blur-md border border-zinc-800/80 hover:border-zinc-700 rounded-xl px-5 py-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 text-white placeholder-zinc-500 transition-all shadow-inner disabled:opacity-50"
-            />
-            
-            {/* Botón Enviar */}
-            <button 
-              type="submit" 
-              disabled={isUploading || isTyping || !inputText.trim()}
-              className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold py-4 px-8 rounded-xl text-[15px] transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:shadow-none disabled:transform-none"
-            >
-              Auditar 🚀
-            </button>
-          </form>
-          <div className="text-center mt-3">
-             <span className="text-[10px] text-zinc-500 font-medium tracking-wide uppercase">Solo los documentos indexados forman el conocimiento del sistema</span>
-          </div>
-        </div>
-
       </section>
 
-    </div>
+      {/* STATS */}
+      <div className="stats-bar">
+        {[["97.4%","Precisión RAG"],["ISO 27001","Framework Principal"],["< 3s","Tiempo de respuesta"],["ChromaDB","Vector Store"]].map(([n,l]) => (
+          <div key={l} className="stat-item reveal">
+            <div className="stat-num">{n}</div>
+            <div className="stat-label">{l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* FEATURES */}
+      <section className="features" id="features">
+        <div className="features-inner">
+          <div className="features-head reveal">
+            <p className="section-label">Capacidades</p>
+            <h2 className="section-title">Todo lo que necesitas para auditar</h2>
+            <p className="section-sub">De la carga de documentos al plan de auditoría — sin fricción, con precisión profesional.</p>
+          </div>
+          <div className="grid-3">
+            {FEATURES.map((f,i) => (
+              <div key={f.title} className="card reveal" style={{transitionDelay:`${i*.08}s`}}>
+                <div className="card-icon" style={{background:f.bg}}>{f.icon}</div>
+                <h3>{f.title}</h3>
+                <p>{f.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ML SECTION */}
+      <section className="ml-section">
+        <div className="ml-inner">
+          <div className="reveal-left">
+            <p className="section-label">Machine Learning</p>
+            <h2 className="section-title">Arquitectura RAG + LLM de última generación</h2>
+            <p className="section-sub">Combinamos embeddings semánticos de HuggingFace con un LLM de alto rendimiento para respuestas fundamentadas y precisas sobre tus sistemas.</p>
+            <div style={{marginTop:"2rem",display:"flex",flexDirection:"column",gap:".75rem"}}>
+              {[
+                ["🧠","Embeddings","all-MiniLM-L6-v2 (HuggingFace)"],
+                ["🗄️","Vector DB","ChromaDB — búsqueda semántica"],
+                ["⚡","LLM","Gemini / GPT-4o via g4f"],
+                ["🔗","Orquestador","LangChain Pipeline"],
+              ].map(([icon,label,val]) => (
+                <div key={label} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".75rem",borderRadius:"10px",background:"rgba(15,23,42,.6)",border:"1px solid rgba(255,255,255,.04)"}}>
+                  <span style={{fontSize:"1.2rem"}}>{icon}</span>
+                  <div>
+                    <div style={{fontSize:".72rem",color:"#475569",textTransform:"uppercase",letterSpacing:"1px",fontWeight:700}}>{label}</div>
+                    <div style={{fontSize:".875rem",color:"#94a3b8",fontFamily:"'JetBrains Mono',monospace"}}>{val}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="reveal-right"><MLVisual/></div>
+        </div>
+      </section>
+
+      {/* PIPELINE */}
+      <section className="pipeline-section" id="pipeline">
+        <div className="pipeline-inner">
+          <div className="reveal" style={{textAlign:"center",marginBottom:"3rem"}}>
+            <p className="section-label">Cómo funciona</p>
+            <h2 className="section-title">Pipeline de Auditoría Inteligente</h2>
+          </div>
+          <div className="pipeline-steps">
+            {PIPELINE.map((s,i) => (
+              <div key={s.title} className="p-step reveal" style={{transitionDelay:`${i*.1}s`}}>
+                <div className="p-num">{i+1}</div>
+                <div className="p-content">
+                  <h3>{s.title}</h3>
+                  <p>{s.desc}</p>
+                  <span className="p-tag" style={{background:s.tagColor,color:s.tagText}}>{s.tag}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* NORMS */}
+      <section className="norms-section" id="norms">
+        <div className="reveal">
+          <p className="section-label">Marcos de referencia</p>
+          <h2 className="section-title" style={{fontSize:"1.75rem"}}>Basado en estándares internacionales</h2>
+        </div>
+        <div className="norms-pills">
+          {NORMS.map(n => <span key={n} className="pill reveal">{n}</span>)}
+        </div>
+      </section>
+
+      {/* FOOTER */}
+      <footer className="footer">
+        <span>© 2025 AuditorIA · Inteligencia Artificial para Auditoría de Sistemas</span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace"}}>v1.0 Beta · RAG + LLM</span>
+      </footer>
+
+      {/* LOGIN MODAL */}
+      {showLogin && (
+        <div className="overlay" onClick={e => { if(e.target===e.currentTarget) setShowLogin(false); }}>
+          <div className="modal">
+            <div className="modal-content-wrapper">
+              <button className="modal-close" onClick={() => setShowLogin(false)}>✕</button>
+              <a href="/" style={{ textDecoration: 'none', display: 'flex', justifyContent: 'center', marginBottom: '0.5rem' }}>
+                <img src="/AuditorIA.jpg" alt="AuditorIA" className="modal-logo-img" />
+              </a>
+              <a href="/" style={{ textDecoration: 'none' }}><div className="modal-logo">AuditorIA</div></a>
+              <p className="modal-sub">Ingresa tus credenciales para continuar</p>
+
+              <form onSubmit={handleLogin}>
+                {error && <div className="form-error">⚠️ {error}</div>}
+                
+                <div className="input-wrapper">
+                  <label className="form-label" htmlFor="usr">Usuario</label>
+                  <div style={{ position: 'relative' }}>
+                    <span className="input-icon">👤</span>
+                    <input id="usr" type="text" className="form-input" placeholder="Ingresa tu usuario"
+                      value={username} onChange={e => setUsername(e.target.value)} required autoComplete="username"/>
+                  </div>
+                </div>
+
+                <div className="input-wrapper">
+                  <label className="form-label" htmlFor="pwd">Contraseña</label>
+                  <div style={{ position: 'relative' }}>
+                    <span className="input-icon">🔒</span>
+                    <input id="pwd" type="password" className="form-input" placeholder="••••••••"
+                      value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password"/>
+                  </div>
+                </div>
+
+                <button type="submit" className="submit-btn" disabled={loading}>
+                  {loading ? "Verificando..." : "Iniciar Sesión →"}
+                </button>
+              </form>
+
+              <div className="divider-container" style={{ display: 'flex', alignItems: 'center', margin: '1rem 0' }}>
+                <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }}></div>
+                <span style={{ margin: '0 1rem', color: '#64748b', fontSize: '0.85rem' }}>o continuar con</span>
+                <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }}></div>
+              </div>
+
+              <div id="google-button-container" style={{ display: 'flex', justifyContent: 'center' }}></div>
+
+              <div className="modal-hint">
+                <div className="hint-row">
+                  <span className="role-badge" style={{background:"rgba(56,189,248,.15)",color:"#38bdf8"}}>USUARIO</span>
+                  <span>user: <code>usuario1</code> / pass: <code>usuario1</code></span>
+                </div>
+                <div className="hint-row">
+                  <span className="role-badge" style={{background:"rgba(239,68,68,.15)",color:"#ef4444"}}>ADMIN</span>
+                  <span>user: <code>admin123</code> / pass: <code>admin123</code></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
